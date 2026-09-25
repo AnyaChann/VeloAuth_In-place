@@ -211,6 +211,7 @@ final class SettingsLoader {
         // Embedded topology is an explicit opt-in. Removing the key on reload must never retain
         // a previously loaded embedded mode or custom embedded network settings.
         state.authServerMode = Settings.AuthServerMode.EXTERNAL.getConfigValue();
+        state.authServerInPlaceSecret = "";
         state.embeddedAuthServerSettings = new Settings.EmbeddedAuthServerSettings();
 
         boolean authServerConfigured = config.containsKey(CONFIG_KEY_AUTH_SERVER);
@@ -221,6 +222,8 @@ final class SettingsLoader {
         if (authServerConfigured) {
             state.authServerMode = explicitStringOrDefault(authServer, "mode", state.authServerMode);
             state.authServerName = YamlParserUtils.getString(authServer, "server-name", state.authServerName);
+            state.authServerInPlaceSecret = YamlParserUtils.getString(
+                    authServer, "in-place-secret", state.authServerInPlaceSecret);
             state.authServerTimeoutSeconds = YamlParserUtils.getInt(authServer,
                     CONFIG_KEY_TIMEOUT_SECONDS, state.authServerTimeoutSeconds);
             state.embeddedAuthServerSettings = loadEmbeddedAuthServerSettings(
@@ -556,6 +559,7 @@ final class SettingsLoader {
         double premiumRefreshThreshold;
         String authServerMode;
         String authServerName;
+        String authServerInPlaceSecret;
         int authServerTimeoutSeconds;
         int connectionTimeoutSeconds;
         int pingTimeoutMillis;
@@ -606,6 +610,7 @@ final class SettingsLoader {
             Settings.AuthServerConfig authServer = snapshot.authServer();
             authServerMode = authServer.mode();
             authServerName = authServer.serverName();
+            authServerInPlaceSecret = authServer.inPlaceSecret();
             authServerTimeoutSeconds = authServer.timeoutSeconds();
             embeddedAuthServerSettings = authServer.embedded();
 
@@ -665,7 +670,8 @@ final class SettingsLoader {
                             authServerMode,
                             authServerName,
                             authServerTimeoutSeconds,
-                            embeddedAuthServerSettings),
+                            embeddedAuthServerSettings,
+                            authServerInPlaceSecret),
                     new Settings.ConnectionSettings(
                             connectionTimeoutSeconds,
                             pingTimeoutMillis,

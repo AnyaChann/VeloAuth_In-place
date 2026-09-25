@@ -151,6 +151,20 @@ public final class SettingsValidator {
             throw new IllegalArgumentException("auth-server.server-name must not be empty");
         }
 
+        if (mode == Settings.AuthServerMode.IN_PLACE) {
+            String secret = settings.getAuthServerInPlaceSecret();
+            // Fail closed: an unset or malformed secret must stop the proxy from starting in
+            // in-place mode rather than silently sending unsigned unlocks. 64 hex chars = the
+            // 32-byte HMAC-SHA256 key shared with the backend gate mod's own config.
+            if (secret == null || !secret.matches("(?i)^[0-9a-f]{64}$")) {
+                throw new IllegalArgumentException(
+                        "auth-server.in-place-secret must be a 64-character hex string "
+                                + "(32 bytes) when auth-server.mode is 'in-place'. Generate one "
+                                + "with: openssl rand -hex 32 — and set the identical value in "
+                                + "the backend gate mod's config.");
+            }
+        }
+
         Settings.EmbeddedAuthServerSettings embedded = settings.getEmbeddedAuthServerSettings();
 
         int port = embedded.getPort();

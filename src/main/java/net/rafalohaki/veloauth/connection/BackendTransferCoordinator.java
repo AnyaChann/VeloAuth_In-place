@@ -53,7 +53,7 @@ final class BackendTransferCoordinator {
         this.settings = settings;
         this.logger = logger;
         this.messages = messages;
-        this.inPlaceUnlocker = new InPlaceUnlocker(logger);
+        this.inPlaceUnlocker = new InPlaceUnlocker(logger, settings);
     }
 
     BackendTransferOutcome transfer(Player player) {

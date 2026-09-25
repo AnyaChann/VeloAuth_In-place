@@ -235,6 +235,11 @@ public class Settings {
         return activeSnapshot().authServer().serverName();
     }
 
+    /** Hex-encoded HMAC-SHA256 key for in-place mode. Never log this value. */
+    public String getAuthServerInPlaceSecret() {
+        return activeSnapshot().authServer().inPlaceSecret();
+    }
+
     public AuthServerMode getAuthServerMode() {
         return AuthServerMode.parse(activeSnapshot().authServer().mode());
     }
@@ -735,7 +740,13 @@ public class Settings {
             String mode,
             String serverName,
             int timeoutSeconds,
-            EmbeddedAuthServerSettings embedded) {
+            EmbeddedAuthServerSettings embedded,
+            /**
+             * Hex-encoded (64 chars = 32 bytes) HMAC-SHA256 key shared with the backend-side
+             * gate mod. Required, and validated to exactly this length, when mode is in-place;
+             * unused otherwise. Never log this value.
+             */
+            String inPlaceSecret) {
     }
 
     record HotSettings(
@@ -769,7 +780,7 @@ public class Settings {
                     new CacheConfig(60, 10_000, 5, 60, 24, 0.8),
                     new AuthServerConfig(
                             AuthServerMode.EXTERNAL.getConfigValue(), "limbo", 300,
-                            new EmbeddedAuthServerSettings()),
+                            new EmbeddedAuthServerSettings(), ""),
                     new ConnectionSettings(30, 3000, 1500),
                     new PasswordSettings(10, 3, 8, 72, new PasswordPolicy()),
                     new BruteForceSettings(5, 5, 168),
