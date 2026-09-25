@@ -439,7 +439,19 @@ public class ConnectionManager {
      * @return true jeśli na auth server
      */
     public boolean isPlayerOnAuthServer(Player player) {
-        return player.getCurrentServer()
+        var current = player.getCurrentServer();
+        // TEMP DIAGNOSTIC: remove once the in-place unlock path is confirmed working.
+        logger.info(
+                "isPlayerOnAuthServer diag: player={} currentServerPresent={} currentServerName={} "
+                        + "authServerName={} authServerMode={}",
+                player.getUsername(),
+                current.isPresent(),
+                current.map(com.velocitypowered.api.proxy.ServerConnection::getServerInfo)
+                        .map(com.velocitypowered.api.proxy.server.ServerInfo::getName)
+                        .orElse("<none>"),
+                authServerProvider.serverName(),
+                authServerProvider.mode());
+        return current
                 .map(com.velocitypowered.api.proxy.ServerConnection::getServer)
                 .map(authServerProvider::isAuthServer)
                 .orElse(false);
