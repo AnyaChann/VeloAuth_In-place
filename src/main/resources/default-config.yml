@@ -86,10 +86,16 @@ auth-server:
   # External remains the default while embedded limbo completes production canary
   # testing. Set this explicitly to embedded only after staging it. Changing the
   # mode always requires a full proxy restart.
+  #
+  # in-place: WIP, unsigned - do not use in production. The backend named by
+  # server-name IS the target server (no limbo, no transfer). Unauthenticated
+  # players must be frozen by a backend-side gate mod; VeloAuth signals unlock
+  # via an unsigned plugin message on channel veloauth:unlock once auth
+  # succeeds. Requires a full proxy restart to take effect.
   mode: external
-  # EXTERNAL MODE ONLY: must match a server name in velocity.toml [servers].
-  # This value is ignored in embedded mode; do not register the reserved
-  # veloauth-embedded-limbo name yourself.
+  # EXTERNAL and IN-PLACE MODES: must match a server name in velocity.toml
+  # [servers]. This value is ignored in embedded mode; do not register the
+  # reserved veloauth-embedded-limbo name yourself.
   server-name: limbo
   # Seconds before an unauthenticated player is kicked from the auth server.
   # Set to 0 (or any value <= 0) to disable the kick — the player can stay on
