@@ -131,7 +131,7 @@ public final class AuthServerProvider implements AutoCloseable {
         if (!state.compareAndSet(State.NEW, State.STARTING)) {
             throw new IllegalStateException("Auth-server provider can only be started once (state=" + state.get() + ')');
         }
-        if (mode == Settings.AuthServerMode.EXTERNAL) {
+        if (mode == Settings.AuthServerMode.EXTERNAL || mode == Settings.AuthServerMode.IN_PLACE) {
             lifecycleLock.lock();
             try {
                 requireStarting();
@@ -244,7 +244,7 @@ public final class AuthServerProvider implements AutoCloseable {
         if (state.get() != State.READY) {
             return Optional.empty();
         }
-        if (mode == Settings.AuthServerMode.EXTERNAL) {
+        if (mode == Settings.AuthServerMode.EXTERNAL || mode == Settings.AuthServerMode.IN_PLACE) {
             return proxyServer.getServer(serverName);
         }
 
@@ -262,7 +262,7 @@ public final class AuthServerProvider implements AutoCloseable {
         if (server == null) {
             return false;
         }
-        if (mode == Settings.AuthServerMode.EXTERNAL) {
+        if (mode == Settings.AuthServerMode.EXTERNAL || mode == Settings.AuthServerMode.IN_PLACE) {
             return serverName.equals(server.getServerInfo().getName());
         }
         ServerInfo serverInfo = ownedServerInfo;
@@ -273,7 +273,7 @@ public final class AuthServerProvider implements AutoCloseable {
     /** Authorizes one upcoming Velocity redirect into the private loopback listener. */
     public Preparation prepare(Player player) {
         Objects.requireNonNull(player, "player");
-        if (mode == Settings.AuthServerMode.EXTERNAL) {
+        if (mode == Settings.AuthServerMode.EXTERNAL || mode == Settings.AuthServerMode.IN_PLACE) {
             return Preparation.READY;
         }
 
