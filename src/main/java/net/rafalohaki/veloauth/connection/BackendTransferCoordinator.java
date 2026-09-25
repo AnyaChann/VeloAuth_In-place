@@ -707,9 +707,13 @@ final class BackendTransferCoordinator {
 
     private void runInPlaceUnlock(Player player, PlayerTransferState state) {
         if (isStale(state) || !player.isActive() || !isPlayerOnAuthServer(player)) {
+            logger.info("In-place unlock skipped for {} (stale={}, active={}, onAuthServer={})",
+                    player.getUsername(), isStale(state), player.isActive(), isPlayerOnAuthServer(player));
             return;
         }
-        inPlaceUnlocker.unlock(player);
+        logger.info("Sending in-place unlock to backend for {}", player.getUsername());
+        boolean sent = inPlaceUnlocker.unlock(player);
+        logger.info("In-place unlock send result for {}: {}", player.getUsername(), sent);
     }
 
     private void runDelayedAutoTransfer(Player player, PlayerTransferState state) {

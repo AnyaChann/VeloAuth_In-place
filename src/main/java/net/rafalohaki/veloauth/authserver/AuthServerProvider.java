@@ -85,7 +85,9 @@ public final class AuthServerProvider implements AutoCloseable {
         Settings.AuthServerMode configuredMode = settings.getAuthServerMode();
         if (configuredMode == Settings.AuthServerMode.EXTERNAL
                 || configuredMode == Settings.AuthServerMode.IN_PLACE) {
-            return forExternal(proxyServer, settings.getAuthServerName(), logger);
+            return new AuthServerProvider(
+                    proxyServer, logger, null, configuredMode, settings.getAuthServerName(),
+                    EmbeddedWiring.NONE);
         }
 
         Settings.EmbeddedAuthServerSettings embedded = settings.getEmbeddedAuthServerSettings();
@@ -107,7 +109,11 @@ public final class AuthServerProvider implements AutoCloseable {
                         Objects.requireNonNull(runtimeFactory, "runtimeFactory")));
     }
 
-    /** Compatibility factory used by existing external-mode integrations and tests. */
+    /**
+     * Compatibility factory used by existing external-mode integrations and tests. Always
+     * constructs an EXTERNAL-mode provider; in-place mode is constructed directly in create(),
+     * not through here, so its mode label is preserved for logging and reports.
+     */
     public static AuthServerProvider forExternal(
             ProxyServer proxyServer,
             String serverName,
@@ -301,6 +307,9 @@ public final class AuthServerProvider implements AutoCloseable {
     public String compatibilityDescription() {
         if (mode == Settings.AuthServerMode.EXTERNAL) {
             return "external-server-managed";
+        }
+        if (mode == Settings.AuthServerMode.IN_PLACE) {
+            return "in-place-unsigned-wip";
         }
         ProtocolRuntime runtime = protocolRuntime;
         String versionRange = runtime == null
