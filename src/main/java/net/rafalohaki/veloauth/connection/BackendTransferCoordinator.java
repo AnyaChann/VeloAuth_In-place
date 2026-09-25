@@ -697,7 +697,14 @@ final class BackendTransferCoordinator {
         if (settings.getAuthServerMode() == Settings.AuthServerMode.IN_PLACE) {
             // The backend is the player's current server: no transfer exists, so signal the
             // unlock in place instead of running the backend selection and retry machinery.
-            runInPlaceUnlock(player, state);
+            // Still goes through auto-transfer-delay-ms: right after ServerConnectedEvent,
+            // player.getCurrentServer() can still be empty for a modded backend (its FML
+            // handshake has not settled yet), so an immediate call sees onAuthServer=false
+            // and skips the unlock. The delay is the same compatibility buffer external mode
+            // relies on for modded clients.
+            scheduleOwnedTask(state, state.pendingTransfer(),
+                    settings.getAutoTransferDelayMillis(), TimeUnit.MILLISECONDS,
+                    () -> runInPlaceUnlock(player, state));
             return;
         }
         scheduleOwnedTask(state, state.pendingTransfer(),
