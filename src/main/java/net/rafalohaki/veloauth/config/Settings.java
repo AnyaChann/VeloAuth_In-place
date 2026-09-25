@@ -411,6 +411,8 @@ public class Settings {
      */
     public enum AuthServerMode {
         EXTERNAL("external"),
+        /** BE doubles as auth server and target; unlock is signalled in place, never transferred. */
+        IN_PLACE("in-place"),
         EMBEDDED("embedded");
 
         private final String configValue;
@@ -428,7 +430,7 @@ public class Settings {
                     .filter(candidate -> candidate.configValue.equals(value))
                     .findFirst()
                     .orElseThrow(() -> new IllegalArgumentException(
-                            "auth-server.mode must be 'external' or 'embedded' (got '" + value + "')"));
+                            "auth-server.mode must be 'external', 'in-place' or 'embedded' (got '" + value + "')"));
         }
     }
 

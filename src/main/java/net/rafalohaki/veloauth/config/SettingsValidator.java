@@ -146,7 +146,8 @@ public final class SettingsValidator {
         Settings.AuthServerMode mode = Settings.AuthServerMode.parse(settings.getConfiguredAuthServerMode());
 
         String externalServerName = settings.getAuthServerName();
-        if (mode == Settings.AuthServerMode.EXTERNAL && externalServerName.isBlank()) {
+        if ((mode == Settings.AuthServerMode.EXTERNAL || mode == Settings.AuthServerMode.IN_PLACE)
+                && externalServerName.isBlank()) {
             throw new IllegalArgumentException("auth-server.server-name must not be empty");
         }
 

@@ -38,6 +38,7 @@ final class BackendTransferCoordinator {
     private final Settings settings;
     private final Logger logger;
     private final Messages messages;
+    private final InPlaceUnlocker inPlaceUnlocker;
 
     BackendTransferCoordinator(
             ConnectionManager lifecycle,
@@ -52,6 +53,7 @@ final class BackendTransferCoordinator {
         this.settings = settings;
         this.logger = logger;
         this.messages = messages;
+        this.inPlaceUnlocker = new InPlaceUnlocker(logger);
     }
 
     BackendTransferOutcome transfer(Player player) {
@@ -692,9 +694,22 @@ final class BackendTransferCoordinator {
                     player.getUsername());
         }
 
+        if (settings.getAuthServerMode() == Settings.AuthServerMode.IN_PLACE) {
+            // The backend is the player's current server: no transfer exists, so signal the
+            // unlock in place instead of running the backend selection and retry machinery.
+            runInPlaceUnlock(player, state);
+            return;
+        }
         scheduleOwnedTask(state, state.pendingTransfer(),
                 settings.getAutoTransferDelayMillis(), TimeUnit.MILLISECONDS,
                 () -> runDelayedAutoTransfer(player, state));
+    }
+
+    private void runInPlaceUnlock(Player player, PlayerTransferState state) {
+        if (isStale(state) || !player.isActive() || !isPlayerOnAuthServer(player)) {
+            return;
+        }
+        inPlaceUnlocker.unlock(player);
     }
 
     private void runDelayedAutoTransfer(Player player, PlayerTransferState state) {

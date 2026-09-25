@@ -83,7 +83,8 @@ public final class AuthServerProvider implements AutoCloseable {
             RuntimeFactory runtimeFactory) {
         Objects.requireNonNull(settings, "settings");
         Settings.AuthServerMode configuredMode = settings.getAuthServerMode();
-        if (configuredMode == Settings.AuthServerMode.EXTERNAL) {
+        if (configuredMode == Settings.AuthServerMode.EXTERNAL
+                || configuredMode == Settings.AuthServerMode.IN_PLACE) {
             return forExternal(proxyServer, settings.getAuthServerName(), logger);
         }
 
