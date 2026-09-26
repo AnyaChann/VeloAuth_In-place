@@ -65,6 +65,9 @@ final class BackendTransferCoordinator {
         if (isStale(state) || !resetTasksIfCurrent(state, false)) {
             return BackendTransferOutcome.REJECTED;
         }
+        if (settings.getAuthServerMode() == Settings.AuthServerMode.IN_PLACE) {
+            return performInPlaceUnlock(player, state);
+        }
         try {
             Optional<RegisteredServer> backendServer =
                     backendSelector.resolveForcedHostTarget(player, state);
@@ -713,14 +716,27 @@ final class BackendTransferCoordinator {
     }
 
     private void runInPlaceUnlock(Player player, PlayerTransferState state) {
+        performInPlaceUnlock(player, state);
+    }
+
+    /**
+     * Shared in-place unlock logic. Used both by the delayed, ServerConnectedEvent-driven
+     * caller (runInPlaceUnlock, right after the player first connects) and synchronously by
+     * transfer(Player, PlayerTransferState) (right after /login or /register succeeds, via
+     * PostAuthFlow -> ConnectionManager#transferToBackend -> BackendTransferCoordinator#transfer
+     * -- a second, previously-unpatched entry point that bypassed IN_PLACE entirely and fell
+     * through to findAvailableBackendServer, which always excludes the auth server itself).
+     */
+    private BackendTransferOutcome performInPlaceUnlock(Player player, PlayerTransferState state) {
         if (isStale(state) || !player.isActive() || !isPlayerOnAuthServer(player)) {
             logger.info("In-place unlock skipped for {} (stale={}, active={}, onAuthServer={})",
                     player.getUsername(), isStale(state), player.isActive(), isPlayerOnAuthServer(player));
-            return;
+            return BackendTransferOutcome.REJECTED;
         }
         logger.info("Sending in-place unlock to backend for {}", player.getUsername());
         boolean sent = inPlaceUnlocker.unlock(player);
         logger.info("In-place unlock send result for {}: {}", player.getUsername(), sent);
+        return sent ? BackendTransferOutcome.CONNECTED : BackendTransferOutcome.REJECTED;
     }
 
     private void runDelayedAutoTransfer(Player player, PlayerTransferState state) {
