@@ -13,6 +13,13 @@ import java.util.Optional;
 import java.util.UUID;
 
 /**
+ * EXPERIMENTAL - DO NOT USE IN PRODUCTION. See SessionCookieListener's class Javadoc for the
+ * known live-server issue (players get kicked with
+ * multiplayer.disconnect.unexpected_query_response on at least one modded backend). This
+ * class's own token format/crypto is not implicated - the failure is at the Velocity cookie
+ * protocol layer, not here - but the feature as a whole must stay disabled until that is
+ * resolved.
+ *
  * Builds and verifies the "remember me" session cookie for cracked/offline accounts.
  *
  * <p>Unlike net.rafalohaki.veloauth.connection.InPlaceUnlocker's one-time unlock signal, this

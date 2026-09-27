@@ -166,6 +166,17 @@ public final class SettingsValidator {
         }
 
         if (settings.isSessionCookieEnabled()) {
+            // EXPERIMENTAL - DO NOT USE: known to kick players with
+            // multiplayer.disconnect.unexpected_query_response on at least one modded backend,
+            // reproducing regardless of delay (confirmed up to 15s), so not a settling-time
+            // issue fixable by tuning auto-transfer-delay-ms. Suspected protocol-level conflict
+            // between Velocity's cookie packets (velocity-api 4.1.2-SNAPSHOT, itself
+            // unreleased) and the backend's own 1.20.5-compatibility mods. Warn loudly rather
+            // than silently allowing this in production.
+            logger.warn("session-cookie.enabled is true, but this feature is EXPERIMENTAL and "
+                    + "known to kick players on at least one modded backend "
+                    + "(multiplayer.disconnect.unexpected_query_response). Do not use in "
+                    + "production until this is resolved.");
             String cookieSecret = settings.getSessionCookieSecret();
             // Fail closed for the same reason as the in-place secret above: this key lets a
             // client skip password verification entirely if it verifies, so an unset or

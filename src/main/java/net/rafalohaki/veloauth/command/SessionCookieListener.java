@@ -8,6 +8,16 @@ import com.velocitypowered.api.proxy.Player;
 import java.util.concurrent.TimeUnit;
 
 /**
+ * EXPERIMENTAL - DO NOT ENABLE IN PRODUCTION. Reproducibly kicks players on at least one
+ * modded backend with multiplayer.disconnect.unexpected_query_response, regardless of when
+ * the cookie request fires relative to the connection lifecycle (confirmed to still happen
+ * after a 15-second delay, ruling out a simple settling-time fix). Suspected protocol-level
+ * conflict between Velocity's cookie packets (velocity-api 4.1.2-SNAPSHOT - itself an
+ * unreleased snapshot) and the backend's own Minecraft-1.20.5-compatibility mods
+ * (connector/packetfixer). Root cause not confirmed. Guarded by
+ * session-cookie.enabled: false (default) and a startup WARN in SettingsValidator; do not
+ * remove those guards without resolving the underlying conflict first.
+ *
  * Wires Velocity's cookie protocol (Minecraft 1.20.5+, exposed via Player#requestCookie /
  * CookieReceiveEvent) into the session-cookie "remember me" feature: requests a stored cookie
  * right after an offline player's initial connection, and verifies whatever comes back via

@@ -117,6 +117,10 @@ final class PostAuthFlow {
     }
 
     /**
+     * EXPERIMENTAL - DO NOT USE IN PRODUCTION (see SessionCookieListener's class Javadoc). Only
+     * runs when session-cookie.enabled is true, which defaults to false and is not meant to be
+     * turned on right now.
+     *
      * Best-effort: a signing failure here must never fail an otherwise-successful login. The
      * player just won't get a "remember me" cookie for this session and will type their
      * password again next time, exactly like today's behavior with the feature disabled.
