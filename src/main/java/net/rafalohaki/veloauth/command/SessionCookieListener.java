@@ -1,9 +1,11 @@
 package net.rafalohaki.veloauth.command;
 
 import com.velocitypowered.api.event.Subscribe;
-import com.velocitypowered.api.event.connection.PostLoginEvent;
 import com.velocitypowered.api.event.player.CookieReceiveEvent;
+import com.velocitypowered.api.event.player.ServerConnectedEvent;
 import com.velocitypowered.api.proxy.Player;
+
+import java.util.concurrent.TimeUnit;
 
 /**
  * Wires Velocity's cookie protocol (Minecraft 1.20.5+, exposed via Player#requestCookie /
@@ -19,6 +21,18 @@ import com.velocitypowered.api.proxy.Player;
  *
  * <p>Purely additive: on any absence, expiry, or verification failure, this does nothing and
  * the player falls through to the completely unmodified normal /login prompt.
+ *
+ * <p>The cookie request is fired from ServerConnectedEvent, not PostLoginEvent. An earlier
+ * version used PostLoginEvent (as soon as the player joined the proxy) and it collided with
+ * Velocity's own backend-connection handshake for a modded server: the request landed while
+ * Velocity was still exchanging LOGIN-phase custom queries with the backend (the mechanism
+ * modded servers use to negotiate the mod list), and the backend kicked the player with
+ * "multiplayer.disconnect.unexpected_query_response". ServerConnectedEvent fires only after
+ * that handshake has fully completed and the player is in PLAY phase on the backend, which is
+ * required for the PLAY-phase cookie protocol (Player#requestCookie/CookieReceiveEvent) to be
+ * safe to use at all - the same class of "don't act before the connection has settled" timing
+ * issue as BackendTransferCoordinator's auto-transfer-delay-ms buffer, just with a protocol
+ * collision as the symptom instead of a silently-empty check.
  */
 final class SessionCookieListener {
 
@@ -29,7 +43,7 @@ final class SessionCookieListener {
     }
 
     @Subscribe
-    public void onPostLogin(PostLoginEvent event) {
+    public void onServerConnected(ServerConnectedEvent event) {
         if (!ctx.settings().isSessionCookieEnabled()) {
             return;
         }
@@ -39,7 +53,21 @@ final class SessionCookieListener {
             // password step for a cookie to ever substitute for.
             return;
         }
-        player.requestCookie(SessionCookieCodec.COOKIE_KEY);
+        // ServerConnectedEvent firing does not guarantee every part of the connection has
+        // settled (BackendTransferCoordinator hit an analogous issue: player.getCurrentServer()
+        // could still read empty right after this same event for a modded backend). Reusing
+        // the same auto-transfer-delay-ms buffer here is a deliberate hedge, not a proven
+        // requirement - but given a bare ServerConnectedEvent hook already caused one live
+        // protocol collision for this feature, waiting out the same settling window the rest
+        // of in-place mode already relies on is cheaper than risking a second one.
+        ctx.plugin().getServer().getScheduler()
+                .buildTask(ctx.plugin(), () -> {
+                    if (player.isActive()) {
+                        player.requestCookie(SessionCookieCodec.COOKIE_KEY);
+                    }
+                })
+                .delay(ctx.settings().getAutoTransferDelayMillis(), TimeUnit.MILLISECONDS)
+                .schedule();
     }
 
     @Subscribe
