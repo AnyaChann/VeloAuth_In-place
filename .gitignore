@@ -95,6 +95,7 @@ $RECYCLE.BIN/
 # Windows shortcuts
 *.lnk
 
+build/
 target/
 
 pom.xml.tag
@@ -115,6 +116,12 @@ notes.txt
 prompt_output.txt
 notes-best.txt
 sonarqube_mcp_instructions.mdc
+
+.test/
+.test-command-flow/
+.test-report-cmd/
+.test-settings/
+.test-validation/
 
 connectedMode.json
 refactor/
