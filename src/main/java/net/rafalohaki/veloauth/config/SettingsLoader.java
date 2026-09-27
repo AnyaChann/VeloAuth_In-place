@@ -20,6 +20,7 @@ final class SettingsLoader {
     private static final String YAML_FIELD_ENABLED = "enabled";
     private static final String CONFIG_KEY_DATABASE = "database";
     private static final String CONFIG_KEY_AUTH_SERVER = "auth-server";
+    private static final String CONFIG_KEY_SESSION_COOKIE = "session-cookie";
     private static final String CONFIG_KEY_PICOLIMBO = "picolimbo";
     private static final String CONFIG_KEY_TIMEOUT_SECONDS = "timeout-seconds";
     private static final String CONFIG_KEY_PING_TIMEOUT_MS = "ping-timeout-ms";
@@ -48,6 +49,7 @@ final class SettingsLoader {
         loadDatabaseSettings(config, state);
         loadCacheSettings(config, state);
         loadAuthServerSettings(config, state, logger);
+        loadSessionCookieSettings(config, state);
         loadConnectionSettings(config, state);
         loadSecuritySettings(config, state);
         loadPremiumSettings(config, state, logger);
@@ -212,6 +214,9 @@ final class SettingsLoader {
         // a previously loaded embedded mode or custom embedded network settings.
         state.authServerMode = Settings.AuthServerMode.EXTERNAL.getConfigValue();
         state.authServerInPlaceSecret = "";
+        state.sessionCookieEnabled = false;
+        state.sessionCookieSecret = "";
+        state.sessionCookieTtlHours = 24;
         state.embeddedAuthServerSettings = new Settings.EmbeddedAuthServerSettings();
 
         boolean authServerConfigured = config.containsKey(CONFIG_KEY_AUTH_SERVER);
@@ -237,6 +242,17 @@ final class SettingsLoader {
             state.authServerTimeoutSeconds = YamlParserUtils.getInt(picolimbo,
                     CONFIG_KEY_TIMEOUT_SECONDS, state.authServerTimeoutSeconds);
         }
+    }
+
+    private static void loadSessionCookieSettings(Map<String, Object> config, Builder state) {
+        Map<String, Object> sessionCookie = mapSectionOrEmpty(
+                config, CONFIG_KEY_SESSION_COOKIE, CONFIG_KEY_SESSION_COOKIE);
+        state.sessionCookieEnabled = YamlParserUtils.getBoolean(
+                sessionCookie, YAML_FIELD_ENABLED, state.sessionCookieEnabled);
+        state.sessionCookieSecret = YamlParserUtils.getString(
+                sessionCookie, "secret", state.sessionCookieSecret);
+        state.sessionCookieTtlHours = YamlParserUtils.getInt(
+                sessionCookie, "ttl-hours", state.sessionCookieTtlHours);
     }
 
     private static Settings.EmbeddedAuthServerSettings loadEmbeddedAuthServerSettings(
@@ -560,6 +576,9 @@ final class SettingsLoader {
         String authServerMode;
         String authServerName;
         String authServerInPlaceSecret;
+        boolean sessionCookieEnabled;
+        String sessionCookieSecret;
+        int sessionCookieTtlHours;
         int authServerTimeoutSeconds;
         int connectionTimeoutSeconds;
         int pingTimeoutMillis;
@@ -611,6 +630,9 @@ final class SettingsLoader {
             authServerMode = authServer.mode();
             authServerName = authServer.serverName();
             authServerInPlaceSecret = authServer.inPlaceSecret();
+            sessionCookieEnabled = snapshot.sessionCookie().enabled();
+            sessionCookieSecret = snapshot.sessionCookie().secretHex();
+            sessionCookieTtlHours = snapshot.sessionCookie().ttlHours();
             authServerTimeoutSeconds = authServer.timeoutSeconds();
             embeddedAuthServerSettings = authServer.embedded();
 
@@ -672,6 +694,8 @@ final class SettingsLoader {
                             authServerTimeoutSeconds,
                             embeddedAuthServerSettings,
                             authServerInPlaceSecret),
+                    new Settings.SessionCookieConfig(
+                            sessionCookieEnabled, sessionCookieSecret, sessionCookieTtlHours),
                     new Settings.ConnectionSettings(
                             connectionTimeoutSeconds,
                             pingTimeoutMillis,

@@ -105,6 +105,25 @@ auth-server:
   # Never commit the real value to version control or share it outside your
   # own proxy/backend hosts.
   in-place-secret: ""
+
+# Optional "remember me" for cracked/offline accounts: a signed, expiring cookie
+# stored client-side (Minecraft 1.20.5+ cookie protocol) lets a returning
+# connection skip the password prompt without typing /login again. Disabled by
+# default - this changes the login flow's trust model, so enable it deliberately.
+# Two-factor (2FA) is NEVER skipped by this, even with a valid cookie - only the
+# password step is bypassed. A cookie automatically stops working the moment the
+# account's password is changed (no separate revocation needed). Premium players
+# are unaffected either way - they never had a password step to begin with.
+session-cookie:
+  enabled: false
+  # REQUIRED when enabled: 64-character hex string (32-byte key), separate from
+  # auth-server.in-place-secret. Generate with: openssl rand -hex 32
+  # Keep this at least as protected as your database credentials: a leak lets an
+  # attacker forge a passwordless login for any registered account.
+  secret: ""
+  # How long a stored cookie remains valid before the player must type the
+  # password again, even if the cookie is otherwise untouched.
+  ttl-hours: 24
   # Seconds before an unauthenticated player is kicked from the auth server.
   # Set to 0 (or any value <= 0) to disable the kick — the player can stay on
   # the auth/limbo server indefinitely.

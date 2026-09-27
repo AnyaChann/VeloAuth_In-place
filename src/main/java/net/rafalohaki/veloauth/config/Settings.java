@@ -240,6 +240,19 @@ public class Settings {
         return activeSnapshot().authServer().inPlaceSecret();
     }
 
+    public boolean isSessionCookieEnabled() {
+        return activeSnapshot().sessionCookie().enabled();
+    }
+
+    /** Hex-encoded HMAC-SHA256 key for the session-resume cookie. Never log this value. */
+    public String getSessionCookieSecret() {
+        return activeSnapshot().sessionCookie().secretHex();
+    }
+
+    public int getSessionCookieTtlHours() {
+        return activeSnapshot().sessionCookie().ttlHours();
+    }
+
     public AuthServerMode getAuthServerMode() {
         return AuthServerMode.parse(activeSnapshot().authServer().mode());
     }
@@ -736,6 +749,20 @@ public class Settings {
             double premiumRefreshThreshold) {
     }
 
+    /**
+     * Optional "remember me" cookie for cracked/offline accounts: a signed, expiring token
+     * stored client-side (Minecraft 1.20.5+ cookie protocol) that lets a returning connection
+     * skip the password prompt. Disabled by default - this is a real change to the login
+     * flow's trust model, not something to silently opt everyone into. 2FA is never skipped by
+     * this, regardless of a valid cookie - see LoginCommand's cookie-login path.
+     */
+    record SessionCookieConfig(
+            boolean enabled,
+            /** Hex-encoded (64 chars = 32 bytes) HMAC-SHA256 key. Never log this value. */
+            String secretHex,
+            int ttlHours) {
+    }
+
     record AuthServerConfig(
             String mode,
             String serverName,
@@ -761,6 +788,7 @@ public class Settings {
             DatabaseConfig database,
             CacheConfig cache,
             AuthServerConfig authServer,
+            SessionCookieConfig sessionCookie,
             ConnectionSettings connection,
             PasswordSettings password,
             BruteForceSettings bruteForce,
@@ -781,6 +809,7 @@ public class Settings {
                     new AuthServerConfig(
                             AuthServerMode.EXTERNAL.getConfigValue(), "limbo", 300,
                             new EmbeddedAuthServerSettings(), ""),
+                    new SessionCookieConfig(false, "", 24),
                     new ConnectionSettings(30, 3000, 1500),
                     new PasswordSettings(10, 3, 8, 72, new PasswordPolicy()),
                     new BruteForceSettings(5, 5, 168),
@@ -797,6 +826,7 @@ public class Settings {
                     database,
                     cache,
                     authServer,
+                    sessionCookie,
                     connection,
                     password,
                     bruteForce,
@@ -810,7 +840,7 @@ public class Settings {
 
         Snapshot withMaximumPasswordLength(int maximum) {
             return new Snapshot(
-                    database, cache, authServer, connection,
+                    database, cache, authServer, sessionCookie, connection,
                     new PasswordSettings(
                             password.bcryptCost,
                             password.ipLimitRegistrations,
@@ -822,7 +852,7 @@ public class Settings {
 
         Snapshot withLanguage(String language) {
             return new Snapshot(
-                    database, cache, authServer, connection, password, bruteForce,
+                    database, cache, authServer, sessionCookie, connection, password, bruteForce,
                     premium, floodgate, alerts, auditLog, twoFactor,
                     new HotSettings(
                             hot.debugEnabled,

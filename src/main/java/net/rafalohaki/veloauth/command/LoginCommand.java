@@ -111,7 +111,7 @@ class LoginCommand implements SimpleCommand {
             }
 
             if (result.verified) {
-                handleSuccessfulLogin(authContext);
+                handleSuccessfulLogin(ctx, authContext, "auth.login.success", "password", "logged in");
             } else {
                 handleFailedLogin(authContext);
             }
@@ -120,7 +120,79 @@ class LoginCommand implements SimpleCommand {
         }
     }
 
-    private void handleSuccessfulLogin(AuthenticationContext authContext) {
+    /**
+     * Entry point for SessionCookieListener: attempts to authenticate a returning offline
+     * player using a previously issued session cookie instead of a typed password. Silent on
+     * any failure (absent, expired, forged, or stale-after-password-change cookie) - the
+     * player simply sees the normal, unmodified /login prompt, exactly as if this had never
+     * run. Deliberately does NOT feed the IP rate limiter or brute-force counters: an
+     * absent/expired cookie is the ordinary case for most connections (first-ever login,
+     * cleared client data, expired TTL), not a credential-guessing signal.
+     */
+    static void attemptCookieLogin(CommandContext ctx, Player player, byte[] cookieData) {
+        ConnectionLifecycleRegistry.Operation operation = ctx.captureConnectionOperation(player);
+        if (operation == null) {
+            return;
+        }
+        ctx.runAsyncCommand(player, operation,
+                () -> processCookieLogin(ctx, player, cookieData, operation), ERROR_DATABASE_QUERY);
+    }
+
+    private static void processCookieLogin(
+            CommandContext ctx, Player player, byte[] cookieData,
+            ConnectionLifecycleRegistry.Operation operation) {
+        if (!ctx.beginConnectionCommand(player, operation)) {
+            return;
+        }
+        try {
+            AuthenticationContext authContext = ctx.validateAndAuthenticatePlayer(
+                    player, "cookie-login", operation);
+            if (authContext == null) {
+                return;
+            }
+
+            String playerIp = PlayerAddressUtils.getPlayerIp(player);
+            if (ctx.authCache().isPlayerAuthorized(player.getUniqueId(), playerIp)
+                    && ctx.authCache().hasActiveSession(player.getUniqueId(), authContext.username(), playerIp)) {
+                return;
+            }
+
+            RegisteredPlayer registeredPlayer = authContext.registeredPlayer();
+            if (registeredPlayer == null) {
+                return;
+            }
+            String hash = registeredPlayer.getHash();
+            if (hash == null || hash.isBlank()) {
+                return;
+            }
+
+            var verifiedId = SessionCookieCodec.verifyToken(
+                    cookieData, player.getUniqueId(), hash, ctx.settings().getSessionCookieSecret());
+            if (verifiedId.isEmpty()) {
+                return;
+            }
+
+            if (!ctx.isConnectionCurrent(authContext.connectionOperation())) {
+                return;
+            }
+
+            handleSuccessfulLogin(ctx, authContext,
+                    "auth.login.cookie_resumed", "cookie-resume", "logged in (cookie)");
+        } finally {
+            ctx.releaseCommandLock(operation.playerId(), operation);
+        }
+    }
+
+    /**
+     * Shared "credential verified" success path. Called after a BCrypt password match
+     * (processLogin) or after a valid session-cookie verification (processCookieLogin) - both
+     * routes converge here so the 2FA gate and PostAuthFlow handoff are single-sourced and can
+     * never be bypassed by either entry point. successMessageKey/auditDetail/reason differ only
+     * in wording, never in control flow, so an operator's audit log can tell the two apart.
+     */
+    static void handleSuccessfulLogin(
+            CommandContext ctx, AuthenticationContext authContext,
+            String successMessageKey, String auditDetail, String reason) {
         try {
             authContext.registeredPlayer().updateLoginData(PlayerAddressUtils.getPlayerIp(authContext.player()));
             var saveResult = ctx.databaseManager().savePlayer(authContext.registeredPlayer()).join();
@@ -136,17 +208,19 @@ class LoginCommand implements SimpleCommand {
 
             // 2FA gate — if the account has a TOTP token AND the feature is currently enabled,
             // park the player in a pending state instead of transferring to backend. The /2fa verify
-            // command completes the transfer once the player produces a valid code.
-            if (shouldRequireTotp(authContext.registeredPlayer())) {
-                parkForTotpVerify(authContext);
+            // command completes the transfer once the player produces a valid code. This applies
+            // unconditionally, including to a cookie-verified login: a valid cookie only ever
+            // substitutes for the password step, never for a second authentication factor.
+            if (shouldRequireTotp(ctx, authContext.registeredPlayer())) {
+                parkForTotpVerify(ctx, authContext);
                 return;
             }
 
-            if (PostAuthFlow.execute(ctx, authContext, authContext.registeredPlayer(), "logged in")) {
+            if (PostAuthFlow.execute(ctx, authContext, authContext.registeredPlayer(), reason)) {
                 ctx.runIfConnectionCurrent(authContext.connectionOperation(), () -> {
                     authContext.player().sendMessage(ctx.messages().component(
-                            "auth.login.success", NamedTextColor.GREEN));
-                    emitAudit(AuditEventType.LOGIN_OK, authContext, null);
+                            successMessageKey, NamedTextColor.GREEN));
+                    emitAudit(ctx, AuditEventType.LOGIN_OK, authContext, auditDetail);
                 });
             }
 
@@ -164,7 +238,7 @@ class LoginCommand implements SimpleCommand {
      * Reloaded two-factor edits remain pending until a full proxy restart, so one running process
      * cannot change enforcement semantics underneath an authentication flow.
      */
-    private boolean shouldRequireTotp(RegisteredPlayer dbPlayer) {
+    private static boolean shouldRequireTotp(CommandContext ctx, RegisteredPlayer dbPlayer) {
         if (!ctx.settings().getTwoFactorSettings().isEnabled()) {
             return false;
         }
@@ -172,7 +246,7 @@ class LoginCommand implements SimpleCommand {
         return token != null && !token.isBlank();
     }
 
-    private void parkForTotpVerify(AuthenticationContext authContext) {
+    private static void parkForTotpVerify(CommandContext ctx, AuthenticationContext authContext) {
         Player player = authContext.player();
         ctx.runIfConnectionCurrent(authContext.connectionOperation(), () -> {
             String ip = PlayerAddressUtils.getPlayerIp(player);
@@ -203,7 +277,7 @@ class LoginCommand implements SimpleCommand {
                     ctx.logger().warn("Player {} blocked for brute force from IP {}",
                             authContext.username(), PlayerAddressUtils.getPlayerIp(authContext.player()));
                 }
-                emitAudit(AuditEventType.LOGIN_FAIL, authContext, "brute-force-blocked");
+                emitAudit(ctx, AuditEventType.LOGIN_FAIL, authContext, "brute-force-blocked");
             } else {
                 authContext.player().sendMessage(ctx.messages().component(
                         "auth.login.incorrect_password", NamedTextColor.RED));
@@ -211,12 +285,13 @@ class LoginCommand implements SimpleCommand {
                     ctx.logger().debug("Failed login attempt for player {} from IP {}",
                             authContext.username(), PlayerAddressUtils.getPlayerIp(authContext.player()));
                 }
-                emitAudit(AuditEventType.LOGIN_FAIL, authContext, "wrong-password");
+                emitAudit(ctx, AuditEventType.LOGIN_FAIL, authContext, "wrong-password");
             }
         });
     }
 
-    private void emitAudit(AuditEventType type, AuthenticationContext authContext, String details) {
+    private static void emitAudit(
+            CommandContext ctx, AuditEventType type, AuthenticationContext authContext, String details) {
         AuditLogService audit = ctx.plugin().getAuditLogService();
         if (audit == null) {
             return;

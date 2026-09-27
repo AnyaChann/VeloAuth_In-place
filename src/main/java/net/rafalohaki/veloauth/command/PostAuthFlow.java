@@ -6,6 +6,7 @@ import net.rafalohaki.veloauth.model.CachedAuthUser;
 import net.rafalohaki.veloauth.model.RegisteredPlayer;
 import net.rafalohaki.veloauth.util.PlayerAddressUtils;
 import net.rafalohaki.veloauth.util.UuidUtils;
+import org.slf4j.Logger;
 import org.slf4j.Marker;
 import org.slf4j.MarkerFactory;
 
@@ -109,7 +110,38 @@ final class PostAuthFlow {
                             authContext.username(), operationName, throwable);
                     return false;
         });
+
+        issueSessionCookieIfEnabled(ctx, p, player);
+
         return true;
+    }
+
+    /**
+     * Best-effort: a signing failure here must never fail an otherwise-successful login. The
+     * player just won't get a "remember me" cookie for this session and will type their
+     * password again next time, exactly like today's behavior with the feature disabled.
+     */
+    private static void issueSessionCookieIfEnabled(
+            CommandContext ctx, Player p, RegisteredPlayer player) {
+        if (!ctx.settings().isSessionCookieEnabled()) {
+            return;
+        }
+        String hash = player.getHash();
+        if (hash == null || hash.isBlank()) {
+            return;
+        }
+        try {
+            byte[] token = SessionCookieCodec.buildToken(
+                    p.getUniqueId(), ctx.settings().getSessionCookieTtlHours(),
+                    hash, ctx.settings().getSessionCookieSecret());
+            p.storeCookie(SessionCookieCodec.COOKIE_KEY, token);
+        } catch (java.security.GeneralSecurityException e) {
+            Logger logger = ctx.logger();
+            if (logger.isErrorEnabled()) {
+                logger.error(AUTH_MARKER, "Failed to sign session cookie for {}: {}",
+                        p.getUsername(), e.toString());
+            }
+        }
     }
 
     private static UUID storedPremiumUuid(RegisteredPlayer player, boolean isPremium) {

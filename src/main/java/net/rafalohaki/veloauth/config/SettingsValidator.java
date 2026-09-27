@@ -165,6 +165,26 @@ public final class SettingsValidator {
             }
         }
 
+        if (settings.isSessionCookieEnabled()) {
+            String cookieSecret = settings.getSessionCookieSecret();
+            // Fail closed for the same reason as the in-place secret above: this key lets a
+            // client skip password verification entirely if it verifies, so an unset or
+            // malformed value must stop the proxy rather than silently disable verification.
+            if (cookieSecret == null || !cookieSecret.matches("(?i)^[0-9a-f]{64}$")) {
+                throw new IllegalArgumentException(
+                        "session-cookie.secret must be a 64-character hex string (32 bytes) "
+                                + "when session-cookie.enabled is true. Generate one with: "
+                                + "openssl rand -hex 32 — keep this value separate from "
+                                + "auth-server.in-place-secret; a leak of this one lets an "
+                                + "attacker forge a passwordless login for any account.");
+            }
+            if (settings.getSessionCookieTtlHours() <= 0) {
+                throw new IllegalArgumentException(
+                        "session-cookie.ttl-hours must be positive when session-cookie.enabled "
+                                + "is true.");
+            }
+        }
+
         Settings.EmbeddedAuthServerSettings embedded = settings.getEmbeddedAuthServerSettings();
 
         int port = embedded.getPort();

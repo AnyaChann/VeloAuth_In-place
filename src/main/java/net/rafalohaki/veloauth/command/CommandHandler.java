@@ -53,6 +53,19 @@ public class CommandHandler {
     }
 
     /**
+     * Constructs the session-cookie event listener, sharing this handler's CommandContext
+     * instance (not a fresh one) so its command-lock bookkeeping stays coordinated with
+     * LoginCommand's. The declared return type is Object, not SessionCookieListener, because
+     * that class is package-private by design (it must live alongside CommandContext) - callers
+     * outside this package can only pass the result straight through to
+     * ProxyServer#getEventManager().register(Object, Object), which accepts any annotated
+     * listener object via reflection and does not need to know its concrete type.
+     */
+    public Object createSessionCookieListener() {
+        return new SessionCookieListener(ctx);
+    }
+
+    /**
      * Registers all commands with the Velocity command manager.
      */
     public void registerCommands() {

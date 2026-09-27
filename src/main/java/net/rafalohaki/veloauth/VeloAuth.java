@@ -88,6 +88,7 @@ public class VeloAuth {
      * published safely on its own so no future call site has to re-derive that reasoning.
      */
     private volatile AuthListener authListener;
+    private volatile Object sessionCookieListener;
     private PremiumResolverService premiumResolverService;
     private PremiumResolverAlertService premiumResolverAlertService;
     private AuditLogService auditLogService;
@@ -552,6 +553,9 @@ public class VeloAuth {
         
         commandHandler = new CommandHandler(this, databaseManager, authCache, settings, messages);
         commandHandler.registerCommands();
+
+        sessionCookieListener = commandHandler.createSessionCookieListener();
+        server.getEventManager().register(this, sessionCookieListener);
         
         logger.debug("✅ Commands registered in {} ms", System.currentTimeMillis() - startTime);
     }
@@ -706,6 +710,10 @@ public class VeloAuth {
             if (authListener != null) {
                 server.getEventManager().unregisterListener(this, authListener);
                 logger.debug("AuthListener unregistered");
+            }
+            if (sessionCookieListener != null) {
+                server.getEventManager().unregisterListener(this, sessionCookieListener);
+                logger.debug("SessionCookieListener unregistered");
             }
 
             // 2. Unregister command handlers
