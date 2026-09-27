@@ -309,7 +309,7 @@ public final class AuthServerProvider implements AutoCloseable {
             return "external-server-managed";
         }
         if (mode == Settings.AuthServerMode.IN_PLACE) {
-            return "in-place-unsigned-wip";
+            return "in-place-hmac-signed";
         }
         ProtocolRuntime runtime = protocolRuntime;
         String versionRange = runtime == null
