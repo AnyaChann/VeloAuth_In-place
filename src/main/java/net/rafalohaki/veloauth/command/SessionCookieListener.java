@@ -88,6 +88,14 @@ final class SessionCookieListener {
         if (!SessionCookieCodec.COOKIE_KEY.equals(event.getOriginalKey())) {
             return;
         }
+        // This cookie response is proxy-initiated (Player#requestCookie), not requested by the
+        // backend, so it must never be forwarded downstream: Velocity's default result for any
+        // CookieReceiveEvent is ForwardResult.forward(), and forwarding an unsolicited cookie
+        // response to the modded backend is exactly what triggers
+        // ServerCommonPacketListenerImpl#handleCookieResponse's DISCONNECT_UNEXPECTED_QUERY kick
+        // (multiplayer.disconnect.unexpected_query_response) - even for an empty/no-cookie-found
+        // response, so this must be set before the empty-data early return below.
+        event.setResult(CookieReceiveEvent.ForwardResult.handled());
         byte[] data = event.getOriginalData();
         if (data == null || data.length == 0) {
             return;
