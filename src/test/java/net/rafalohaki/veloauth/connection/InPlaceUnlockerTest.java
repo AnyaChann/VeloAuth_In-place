@@ -33,63 +33,65 @@ class InPlaceUnlockerTest {
             "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff";
 
     @Test
-    void buildSignedPayload_Format_IsFourPipeSeparatedFieldsWithMatchingUuid() throws GeneralSecurityException {
+    void buildSignedUnlock_Format_IsVersionedFiveFieldsWithMatchingUuid() throws GeneralSecurityException {
         UUID uuid = UUID.randomUUID();
 
-        byte[] payload = InPlaceUnlocker.buildSignedPayload(uuid, SECRET_HEX);
-        String body = new String(payload, StandardCharsets.UTF_8);
-        String[] parts = body.split("\\|");
+        var signed = InPlaceUnlocker.buildSignedUnlock(uuid, SECRET_HEX);
+        String[] parts = new String(signed.payload(), StandardCharsets.UTF_8).split("\\|");
 
-        assertEquals(4, parts.length);
-        assertEquals(uuid.toString(), parts[0]);
-        assertEquals(32, parts[2].length(), "nonce must be 16 raw bytes hex-encoded");
-        assertEquals(64, parts[3].length(), "HMAC-SHA256 signature must be 32 raw bytes hex-encoded");
+        assertEquals(5, parts.length);
+        assertEquals("v1", parts[0]);
+        assertEquals(uuid.toString(), parts[1]);
+        assertEquals(32, parts[3].length(), "nonce must be 16 raw bytes hex-encoded");
+        assertEquals(signed.nonceHex(), parts[3], "the returned nonce is the one inside the payload");
+        assertEquals(64, parts[4].length(), "HMAC-SHA256 signature must be 32 raw bytes hex-encoded");
     }
 
     @Test
-    void buildSignedPayload_Signature_VerifiesAgainstIndependentHmacComputation() throws GeneralSecurityException {
+    void buildSignedUnlock_Signature_CoversLabelAndAllFields() throws GeneralSecurityException {
         UUID uuid = UUID.randomUUID();
 
-        byte[] payload = InPlaceUnlocker.buildSignedPayload(uuid, SECRET_HEX);
-        String body = new String(payload, StandardCharsets.UTF_8);
-        String[] parts = body.split("\\|");
-        String signedPart = parts[0] + "|" + parts[1] + "|" + parts[2];
+        var signed = InPlaceUnlocker.buildSignedUnlock(uuid, SECRET_HEX);
+        String[] parts = new String(signed.payload(), StandardCharsets.UTF_8).split("\\|");
+        String signedPart = "veloauth-unlock-v1|" + parts[1] + "|" + parts[2] + "|" + parts[3];
 
-        String expectedSignature = independentHmacHex(SECRET_HEX, signedPart);
-        assertEquals(expectedSignature, parts[3]);
+        assertEquals(independentHmacHex(SECRET_HEX, signedPart), parts[4]);
+        assertNotEquals(independentHmacHex(SECRET_HEX, parts[1] + "|" + parts[2] + "|" + parts[3]), parts[4],
+                "the direction label must be part of the signed input (domain separation)");
     }
 
     @Test
-    void buildSignedPayload_WrongSecret_ProducesADifferentSignature() throws GeneralSecurityException {
+    void buildSignedUnlock_WrongSecret_ProducesADifferentSignature() throws GeneralSecurityException {
         UUID uuid = UUID.randomUUID();
 
-        byte[] payload = InPlaceUnlocker.buildSignedPayload(uuid, SECRET_HEX);
-        String body = new String(payload, StandardCharsets.UTF_8);
-        String[] parts = body.split("\\|");
-        String signedPart = parts[0] + "|" + parts[1] + "|" + parts[2];
+        var signed = InPlaceUnlocker.buildSignedUnlock(uuid, SECRET_HEX);
+        String[] parts = new String(signed.payload(), StandardCharsets.UTF_8).split("\\|");
+        String signedPart = "veloauth-unlock-v1|" + parts[1] + "|" + parts[2] + "|" + parts[3];
 
-        String signatureWithOtherSecret = independentHmacHex(OTHER_SECRET_HEX, signedPart);
-        assertNotEquals(signatureWithOtherSecret, parts[3],
+        assertNotEquals(independentHmacHex(OTHER_SECRET_HEX, signedPart), parts[4],
                 "a forged payload signed with a different key must not verify");
     }
 
     @Test
-    void buildSignedPayload_TwoCallsForSamePlayer_ProduceDifferentNoncesAndSignatures() throws GeneralSecurityException {
+    void buildSignedUnlock_TwoCallsForSamePlayer_ProduceDifferentNoncesAndSignatures()
+            throws GeneralSecurityException {
         UUID uuid = UUID.randomUUID();
 
-        String first = new String(InPlaceUnlocker.buildSignedPayload(uuid, SECRET_HEX), StandardCharsets.UTF_8);
-        String second = new String(InPlaceUnlocker.buildSignedPayload(uuid, SECRET_HEX), StandardCharsets.UTF_8);
+        var first = InPlaceUnlocker.buildSignedUnlock(uuid, SECRET_HEX);
+        var second = InPlaceUnlocker.buildSignedUnlock(uuid, SECRET_HEX);
 
-        assertNotEquals(first, second,
-                "each unlock must carry a fresh nonce so a captured payload cannot be replayed verbatim");
+        assertNotEquals(first.nonceHex(), second.nonceHex(),
+                "each attempt must carry a fresh nonce so a captured payload cannot be replayed verbatim");
+        assertNotEquals(new String(first.payload(), StandardCharsets.UTF_8),
+                new String(second.payload(), StandardCharsets.UTF_8));
     }
 
     @Test
-    void buildSignedPayload_MalformedSecretHex_ThrowsRatherThanSendingUnsigned() {
+    void buildSignedUnlock_MalformedSecretHex_ThrowsRatherThanSendingUnsigned() {
         UUID uuid = UUID.randomUUID();
 
         assertThrows(IllegalArgumentException.class,
-                () -> InPlaceUnlocker.buildSignedPayload(uuid, "not-hex"));
+                () -> InPlaceUnlocker.buildSignedUnlock(uuid, "not-hex"));
     }
 
     @Test
@@ -102,11 +104,11 @@ class InPlaceUnlockerTest {
 
         InPlaceUnlocker unlocker = new InPlaceUnlocker(logger, settings);
 
-        assertFalse(unlocker.unlock(player));
+        assertFalse(unlocker.unlock(player, new InPlaceUnlocker.Attempt()));
     }
 
     @Test
-    void unlock_WithCurrentServer_SendsAPayloadThatVerifiesAgainstTheConfiguredSecret()
+    void unlock_WithCurrentServer_SendsAVerifiablePayloadAndRegistersItsNonce()
             throws GeneralSecurityException {
         Logger logger = mock(Logger.class);
         Settings settings = mock(Settings.class);
@@ -121,14 +123,109 @@ class InPlaceUnlockerTest {
         when(connection.sendPluginMessage(eq(InPlaceUnlocker.CHANNEL), any(byte[].class))).thenReturn(true);
 
         InPlaceUnlocker unlocker = new InPlaceUnlocker(logger, settings);
-        assertTrue(unlocker.unlock(player));
+        InPlaceUnlocker.Attempt attempt = new InPlaceUnlocker.Attempt();
+        assertTrue(unlocker.unlock(player, attempt));
 
         var captor = org.mockito.ArgumentCaptor.forClass(byte[].class);
         verify(connection).sendPluginMessage(eq(InPlaceUnlocker.CHANNEL), captor.capture());
-        String body = new String(captor.getValue(), StandardCharsets.UTF_8);
-        String[] parts = body.split("\\|");
-        assertEquals(uuid.toString(), parts[0]);
-        assertEquals(independentHmacHex(SECRET_HEX, parts[0] + "|" + parts[1] + "|" + parts[2]), parts[3]);
+        String[] parts = new String(captor.getValue(), StandardCharsets.UTF_8).split("\\|");
+        assertEquals("v1", parts[0]);
+        assertEquals(uuid.toString(), parts[1]);
+        assertEquals(independentHmacHex(SECRET_HEX,
+                "veloauth-unlock-v1|" + parts[1] + "|" + parts[2] + "|" + parts[3]), parts[4]);
+        assertTrue(attempt.ownsNonce(parts[3]), "the attempt must remember the nonce it issued");
+    }
+
+    // ---- ACK verification ----
+
+    private record AckFixture(InPlaceUnlocker unlocker, Player player, InPlaceUnlocker.Attempt attempt,
+                              UUID uuid, String nonce) {
+    }
+
+    private static AckFixture ackFixture() throws GeneralSecurityException {
+        Settings settings = mock(Settings.class);
+        when(settings.getAuthServerInPlaceSecret()).thenReturn(SECRET_HEX);
+        UUID uuid = UUID.randomUUID();
+        Player player = mock(Player.class);
+        when(player.getUniqueId()).thenReturn(uuid);
+        when(player.getUsername()).thenReturn("test-player");
+        ServerConnection connection = mock(ServerConnection.class);
+        when(player.getCurrentServer()).thenReturn(Optional.of(connection));
+        when(connection.sendPluginMessage(eq(InPlaceUnlocker.CHANNEL), any(byte[].class))).thenReturn(true);
+
+        InPlaceUnlocker unlocker = new InPlaceUnlocker(mock(Logger.class), settings);
+        InPlaceUnlocker.Attempt attempt = new InPlaceUnlocker.Attempt();
+        unlocker.unlock(player, attempt);
+        var captor = org.mockito.ArgumentCaptor.forClass(byte[].class);
+        verify(connection).sendPluginMessage(eq(InPlaceUnlocker.CHANNEL), captor.capture());
+        String nonce = new String(captor.getValue(), StandardCharsets.UTF_8).split("\\|")[3];
+        return new AckFixture(unlocker, player, attempt, uuid, nonce);
+    }
+
+    private static byte[] ack(String secretHex, UUID uuid, String nonce) throws GeneralSecurityException {
+        String sig = independentHmacHex(secretHex, "veloauth-ack-v1|" + uuid + "|" + nonce);
+        return ("v1|" + uuid + "|" + nonce + "|" + sig).getBytes(StandardCharsets.UTF_8);
+    }
+
+    @Test
+    void acknowledge_ValidAckForIssuedNonce_IsAccepted() throws GeneralSecurityException {
+        AckFixture f = ackFixture();
+
+        assertTrue(f.unlocker().acknowledge(f.player(), f.attempt(), ack(SECRET_HEX, f.uuid(), f.nonce())));
+    }
+
+    @Test
+    void acknowledge_WrongSecret_IsRejected() throws GeneralSecurityException {
+        AckFixture f = ackFixture();
+
+        assertFalse(f.unlocker().acknowledge(f.player(), f.attempt(),
+                ack(OTHER_SECRET_HEX, f.uuid(), f.nonce())));
+    }
+
+    @Test
+    void acknowledge_NonceNeverIssuedByThisAttempt_IsRejected() throws GeneralSecurityException {
+        AckFixture f = ackFixture();
+
+        assertFalse(f.unlocker().acknowledge(f.player(), f.attempt(),
+                ack(SECRET_HEX, f.uuid(), "00".repeat(16))));
+    }
+
+    @Test
+    void acknowledge_AckForAnotherPlayersUuid_IsRejected() throws GeneralSecurityException {
+        AckFixture f = ackFixture();
+
+        assertFalse(f.unlocker().acknowledge(f.player(), f.attempt(),
+                ack(SECRET_HEX, UUID.randomUUID(), f.nonce())));
+    }
+
+    @Test
+    void acknowledge_UnlockMessageReplayedAsAck_IsRejected() throws GeneralSecurityException {
+        AckFixture f = ackFixture();
+        // Signed with the UNLOCK label over the same fields: must not pass as an ACK.
+        String sig = independentHmacHex(SECRET_HEX, "veloauth-unlock-v1|" + f.uuid() + "|" + f.nonce());
+        byte[] forged = ("v1|" + f.uuid() + "|" + f.nonce() + "|" + sig).getBytes(StandardCharsets.UTF_8);
+
+        assertFalse(f.unlocker().acknowledge(f.player(), f.attempt(), forged));
+    }
+
+    @Test
+    void acknowledge_MalformedOrOversized_IsRejectedWithoutThrowing() throws GeneralSecurityException {
+        AckFixture f = ackFixture();
+
+        assertFalse(f.unlocker().acknowledge(f.player(), f.attempt(), null));
+        assertFalse(f.unlocker().acknowledge(f.player(), f.attempt(), "garbage".getBytes(StandardCharsets.UTF_8)));
+        assertFalse(f.unlocker().acknowledge(f.player(), f.attempt(),
+                ("v2|" + f.uuid() + "|" + f.nonce() + "|00").getBytes(StandardCharsets.UTF_8)));
+        assertFalse(f.unlocker().acknowledge(f.player(), f.attempt(), new byte[InPlaceUnlocker.MAX_ACK_BYTES + 1]));
+    }
+
+    @Test
+    void attempt_MarkAcknowledged_IsTrueOnlyTheFirstTime() {
+        InPlaceUnlocker.Attempt attempt = new InPlaceUnlocker.Attempt();
+
+        assertTrue(attempt.markAcknowledged());
+        assertFalse(attempt.markAcknowledged());
+        assertTrue(attempt.acknowledged());
     }
 
     private static String independentHmacHex(String secretHex, String data) throws GeneralSecurityException {

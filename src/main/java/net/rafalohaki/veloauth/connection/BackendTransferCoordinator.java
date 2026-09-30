@@ -31,6 +31,10 @@ final class BackendTransferCoordinator {
     private static final int BACKEND_WAIT_REMINDER_INTERVAL = 6;
     private static final int MAX_BACKEND_WAIT_RETRIES = 60;
     private static final long BACKEND_WAIT_INTERVAL_SECONDS = 5;
+    /** In-place unlock: how long to wait for the backend's ACK before the next attempt. */
+    private static final long UNLOCK_ACK_TIMEOUT_MILLIS = 2_000L;
+    /** In-place unlock: total attempts (first send plus retries) before failing closed. */
+    private static final int MAX_UNLOCK_ATTEMPTS = 3;
 
     private final ConnectionManager lifecycle;
     private final BackendSelector backendSelector;
@@ -733,10 +737,78 @@ final class BackendTransferCoordinator {
                     player.getUsername(), isStale(state), player.isActive(), isPlayerOnAuthServer(player));
             return BackendTransferOutcome.REJECTED;
         }
-        logger.info("Sending in-place unlock to backend for {}", player.getUsername());
-        boolean sent = inPlaceUnlocker.unlock(player);
-        logger.info("In-place unlock send result for {}: {}", player.getUsername(), sent);
+        InPlaceUnlocker.Attempt attempt = new InPlaceUnlocker.Attempt();
+        state.unlockAttempt().set(attempt);
+        boolean sent = sendUnlockAttempt(player, state, attempt);
         return sent ? BackendTransferOutcome.CONNECTED : BackendTransferOutcome.REJECTED;
+    }
+
+    /**
+     * Sends one unlock attempt and arms the ACK timeout. A successful send only means the
+     * message was accepted for sending; the unlock is complete only once a matching, valid ACK
+     * arrives (see handleInPlaceUnlockAck). The timeout task is owned by the connection state,
+     * so a disconnect, reconnect or new login cancels it.
+     */
+    private boolean sendUnlockAttempt(
+            Player player, PlayerTransferState state, InPlaceUnlocker.Attempt attempt) {
+        int number = attempt.nextAttemptNumber();
+        boolean sent = inPlaceUnlocker.unlock(player, attempt);
+        logger.info("In-place unlock attempt {}/{} for {}: sent={}",
+                number, MAX_UNLOCK_ATTEMPTS, player.getUsername(), sent);
+        if (!sent && number == 1) {
+            // Nothing was sent (no current server / signing failure): keep the old
+            // rejected outcome instead of waiting for an ACK that cannot arrive.
+            state.unlockAttempt().compareAndSet(attempt, null);
+            return false;
+        }
+        scheduleOwnedTask(state, state.unlockRetry(), UNLOCK_ACK_TIMEOUT_MILLIS,
+                TimeUnit.MILLISECONDS, () -> onUnlockAckTimeout(player, state, attempt));
+        return true;
+    }
+
+    private void onUnlockAckTimeout(
+            Player player, PlayerTransferState state, InPlaceUnlocker.Attempt attempt) {
+        if (isStale(state) || state.unlockAttempt().get() != attempt || attempt.acknowledged()) {
+            return;
+        }
+        if (!player.isActive()) {
+            return;
+        }
+        if (attempt.attemptsMade() >= MAX_UNLOCK_ATTEMPTS) {
+            // Do not assume the backend is unlocked. The gate keeps the player frozen, so
+            // fail closed with a clear disconnect instead of leaving them stuck.
+            logger.warn("In-place unlock for {} was not acknowledged after {} attempts ({} ms) "
+                            + "- disconnecting",
+                    player.getUsername(), attempt.attemptsMade(), attempt.elapsedMillis());
+            state.unlockAttempt().compareAndSet(attempt, null);
+            player.disconnect(messages.component(CONNECTION_ERROR_GAME_SERVER, NamedTextColor.RED,
+                    messages.get(MSG_ERROR_UNKNOWN)));
+            return;
+        }
+        sendUnlockAttempt(player, state, attempt);
+    }
+
+    /**
+     * Handles a backend ACK. Bound to the connection: the ACK is looked up on the CURRENT
+     * transfer state of the player it arrived on, so a stale ACK from an earlier connection,
+     * a duplicate, or one for a nonce this connection never issued is ignored.
+     */
+    void handleInPlaceUnlockAck(Player player, byte[] data) {
+        PlayerTransferState state = currentState(player);
+        if (state == null || isStale(state)) {
+            return;
+        }
+        InPlaceUnlocker.Attempt attempt = state.unlockAttempt().get();
+        if (attempt == null || !inPlaceUnlocker.acknowledge(player, attempt, data)) {
+            logger.debug("Ignored an in-place unlock ACK for {} (no pending unlock or invalid)",
+                    player.getUsername());
+            return;
+        }
+        if (attempt.markAcknowledged()) {
+            ScheduledTaskRegistry.cancel(state.unlockRetry());
+            logger.info("In-place unlock acknowledged for {} after {} attempt(s), {} ms",
+                    player.getUsername(), attempt.attemptsMade(), attempt.elapsedMillis());
+        }
     }
 
     private void runDelayedAutoTransfer(Player player, PlayerTransferState state) {

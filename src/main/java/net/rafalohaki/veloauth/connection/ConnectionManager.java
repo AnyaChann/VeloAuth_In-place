@@ -402,6 +402,14 @@ public class ConnectionManager {
     }
 
     /**
+     * Routes a backend's in-place unlock ACK (veloauth:ack) to the connection that issued the
+     * unlock. Verification (HMAC, UUID, nonce ownership) happens in the coordinator.
+     */
+    public void handleInPlaceUnlockAck(Player player, byte[] data) {
+        backendTransferCoordinator.handleInPlaceUnlockAck(player, data);
+    }
+
+    /**
      * Selects an available non-auth backend for an initial connection whose Velocity target
      * is the auth server. The returned future preserves the configured {@code try} order and
      * never blocks the caller's event thread.
