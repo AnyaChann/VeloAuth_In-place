@@ -1201,7 +1201,18 @@ public class AuthListener {
                         player.getUsername(), serverName);
             }
             player.sendMessage(messages.component("general.welcome.full", NamedTextColor.GREEN));
+            announceAuthenticatedIfAuthorized(player, serverName);
         });
+    }
+
+    /**
+     * Limbo mode: the moment an authorized player reaches a backend is the moment they can play. In-place mode
+     * announces from the unlock ACK instead (see ConnectionManager#handleInPlaceUnlockAck). Once per connection.
+     */
+    private void announceAuthenticatedIfAuthorized(Player player, String serverName) {
+        if (authCache.isPlayerAuthorized(player.getUniqueId(), PlayerAddressUtils.getPlayerIp(player))) {
+            connectionManager.announceAuthenticated(player, serverName);
+        }
     }
 
     private void handleAuthServerConnection(Player player, Operation operation) {

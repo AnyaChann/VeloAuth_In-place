@@ -244,6 +244,10 @@ final class BackendTransferCoordinator {
         if (!finishIfCurrent(state, true)) {
             return BackendTransferOutcome.REJECTED;
         }
+        // The player is on the backend now. ServerConnectedEvent may already have announced them (state still
+        // current then) or may come after the state was retired just above, so announce from here too; the
+        // once-per-connection flag on the state decides which one fires.
+        lifecycle.announceAuthenticated(state, serverName);
         if (logger.isDebugEnabled()) {
             logger.debug(messages.get(
                     "player.transfer.backend.success", player.getUsername(), serverName));
@@ -793,22 +797,24 @@ final class BackendTransferCoordinator {
      * transfer state of the player it arrived on, so a stale ACK from an earlier connection,
      * a duplicate, or one for a nonce this connection never issued is ignored.
      */
-    void handleInPlaceUnlockAck(Player player, byte[] data) {
+    boolean handleInPlaceUnlockAck(Player player, byte[] data) {
         PlayerTransferState state = currentState(player);
         if (state == null || isStale(state)) {
-            return;
+            return false;
         }
         InPlaceUnlocker.Attempt attempt = state.unlockAttempt().get();
         if (attempt == null || !inPlaceUnlocker.acknowledge(player, attempt, data)) {
             logger.debug("Ignored an in-place unlock ACK for {} (no pending unlock or invalid)",
                     player.getUsername());
-            return;
+            return false;
         }
         if (attempt.markAcknowledged()) {
             ScheduledTaskRegistry.cancel(state.unlockRetry());
             logger.info("In-place unlock acknowledged for {} after {} attempt(s), {} ms",
                     player.getUsername(), attempt.attemptsMade(), attempt.elapsedMillis());
+            return true;
         }
+        return false;
     }
 
     private void runDelayedAutoTransfer(Player player, PlayerTransferState state) {

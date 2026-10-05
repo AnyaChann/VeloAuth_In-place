@@ -1,6 +1,7 @@
 package net.rafalohaki.veloauth.connection;
 
 import com.velocitypowered.api.proxy.Player;
+import com.velocitypowered.api.proxy.ConnectionRequestBuilder;
 import com.velocitypowered.api.proxy.server.RegisteredServer;
 import net.rafalohaki.veloauth.cache.AuthCache;
 import com.velocitypowered.api.proxy.ServerConnection;
@@ -10,6 +11,7 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import net.kyori.adventure.text.Component;
 import org.mockito.ArgumentCaptor;
+import org.mockito.InOrder;
 import org.slf4j.Logger;
 
 import javax.crypto.Mac;
@@ -19,6 +21,7 @@ import java.nio.charset.StandardCharsets;
 import java.util.HexFormat;
 import java.util.Optional;
 import java.util.UUID;
+import java.util.concurrent.CompletableFuture;
 
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertSame;
@@ -30,6 +33,7 @@ import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.ArgumentMatchers.nullable;
 import static org.mockito.ArgumentMatchers.same;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
@@ -259,4 +263,94 @@ class BackendTransferCoordinatorTest {
 
         verify(connection, times(1)).sendPluginMessage(any(), any(byte[].class));
         verify(player, never()).disconnect(nullable(Component.class));
-    }}
+    }
+
+    // ---- PlayerAuthenticatedEvent hooks: what the coordinator reports and when it announces ----
+
+    @Test
+    void inPlaceUnlock_ValidAck_ReportsTrueOnlyForTheAckThatCompletesTheUnlock() throws Exception {
+        ServerConnection connection = inPlaceReady();
+        coordinator.transfer(player);
+        byte[] ack = validAck(nonceOfLastSend(connection, 1));
+
+        assertTrue(coordinator.handleInPlaceUnlockAck(player, ack), "the completing ACK is what ConnectionManager announces");
+        assertFalse(coordinator.handleInPlaceUnlockAck(player, ack), "a repeated ACK completes nothing and must not announce again");
+    }
+
+    @Test
+    void inPlaceUnlock_InvalidOrStaleAck_ReportsFalse() throws Exception {
+        ServerConnection connection = inPlaceReady();
+        coordinator.transfer(player);
+        String nonce = nonceOfLastSend(connection, 1);
+
+        assertFalse(coordinator.handleInPlaceUnlockAck(player, validAck("00".repeat(16))), "foreign nonce");
+        assertFalse(coordinator.handleInPlaceUnlockAck(player,
+                ("v1|" + state.playerId() + "|" + nonce + "|" + "00".repeat(32)).getBytes(StandardCharsets.UTF_8)),
+                "wrong signature");
+        assertFalse(coordinator.handleInPlaceUnlockAck(player, new byte[0]), "empty payload");
+
+        when(lifecycle.isStale(state)).thenReturn(true);
+        assertFalse(coordinator.handleInPlaceUnlockAck(player, validAck(nonce)), "ACK for a superseded connection");
+    }
+
+    @Test
+    void inPlaceUnlock_AckWithoutAnyConnectionState_ReportsFalse() {
+        when(lifecycle.currentState(player)).thenReturn(null);
+
+        assertFalse(coordinator.handleInPlaceUnlockAck(player, new byte[]{1, 2, 3}));
+    }
+
+    @Test
+    void inPlaceUnlock_SendingTheUnlock_DoesNotAnnounceBeforeTheAck() {
+        inPlaceReady();
+
+        assertSame(BackendTransferOutcome.CONNECTED, coordinator.transfer(player));
+
+        verify(lifecycle, never()).announceAuthenticated(any(PlayerTransferState.class), any());
+    }
+
+    private RegisteredServer limboBackendReady(boolean connectionSucceeds) {
+        RegisteredServer backend = mock(RegisteredServer.class);
+        ConnectionRequestBuilder.Result result = mock(ConnectionRequestBuilder.Result.class);
+        when(backend.getServerInfo()).thenReturn(new com.velocitypowered.api.proxy.server.ServerInfo(
+                "backend", InetSocketAddress.createUnresolved("127.0.0.1", 25566)));
+        when(selector.resolveForcedHostTarget(player, state)).thenReturn(Optional.of(backend));
+        when(player.isActive()).thenReturn(true);
+        when(result.isSuccessful()).thenReturn(connectionSucceeds);
+        when(lifecycle.startConnectionIfCurrent(player, state, backend))
+                .thenReturn(CompletableFuture.completedFuture(result));
+        return backend;
+    }
+
+    @Test
+    void transfer_LimboConnectionSucceeds_RetiresTheStateThenAnnouncesExactlyOnce() {
+        limboBackendReady(true);
+        when(lifecycle.finishIfCurrent(state, true)).thenReturn(true);
+
+        assertSame(BackendTransferOutcome.CONNECTED, coordinator.transfer(player));
+
+        InOrder order = inOrder(lifecycle);
+        order.verify(lifecycle).finishIfCurrent(state, true);
+        order.verify(lifecycle).announceAuthenticated(state, "backend");
+        verify(lifecycle, times(1)).announceAuthenticated(any(PlayerTransferState.class), any());
+    }
+
+    @Test
+    void transfer_LimboConnectionSucceedsButTheStateWasAlreadyRetired_DoesNotAnnounce() {
+        limboBackendReady(true);
+        when(lifecycle.finishIfCurrent(state, true)).thenReturn(false);
+
+        assertSame(BackendTransferOutcome.REJECTED, coordinator.transfer(player));
+
+        verify(lifecycle, never()).announceAuthenticated(any(PlayerTransferState.class), any());
+    }
+
+    @Test
+    void transfer_LimboConnectionRefused_DoesNotAnnounce() {
+        limboBackendReady(false);
+
+        coordinator.transfer(player);
+
+        verify(lifecycle, never()).announceAuthenticated(any(PlayerTransferState.class), any());
+    }
+}

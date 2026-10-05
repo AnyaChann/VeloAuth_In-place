@@ -1131,6 +1131,58 @@ class AuthListenerTest {
                         + fallback);
     }
 
+    private RegisteredServer backendServerNamed(String name) {
+        RegisteredServer backend = org.mockito.Mockito.mock(RegisteredServer.class);
+        ServerInfo info = org.mockito.Mockito.mock(ServerInfo.class);
+        when(backend.getServerInfo()).thenReturn(info);
+        when(info.getName()).thenReturn(name);
+        return backend;
+    }
+
+    @Test
+    void onServerConnected_backendServerWithAnAuthorizedPlayer_announcesTheAuthentication() throws Exception {
+        UUID playerUuid = UUID.randomUUID();
+        Player player = org.mockito.Mockito.mock(Player.class);
+        when(player.getUniqueId()).thenReturn(playerUuid);
+        when(player.getUsername()).thenReturn("BackendPlayer");
+        when(player.getRemoteAddress()).thenReturn(new InetSocketAddress("192.0.2.90", 25565));
+        when(authCache.isPlayerAuthorized(playerUuid, "192.0.2.90")).thenReturn(true);
+
+        activateConnection(player);
+        authListener.onServerConnected(new ServerConnectedEvent(player, backendServerNamed("survival"), null));
+
+        verify(connectionManager).announceAuthenticated(player, "survival");
+    }
+
+    @Test
+    void onServerConnected_backendServerWithAnUnauthorizedPlayer_neverAnnounces() throws Exception {
+        UUID playerUuid = UUID.randomUUID();
+        Player player = org.mockito.Mockito.mock(Player.class);
+        when(player.getUniqueId()).thenReturn(playerUuid);
+        when(player.getUsername()).thenReturn("SneakyPlayer");
+        when(player.getRemoteAddress()).thenReturn(new InetSocketAddress("192.0.2.91", 25565));
+        when(authCache.isPlayerAuthorized(playerUuid, "192.0.2.91")).thenReturn(false);
+
+        activateConnection(player);
+        authListener.onServerConnected(new ServerConnectedEvent(player, backendServerNamed("survival"), null));
+
+        verify(connectionManager, org.mockito.Mockito.never()).announceAuthenticated(org.mockito.ArgumentMatchers.eq(player), org.mockito.ArgumentMatchers.any());
+    }
+
+    @Test
+    void onServerConnected_backendServerForARetiredConnection_neverAnnounces() throws Exception {
+        UUID playerUuid = UUID.randomUUID();
+        Player player = org.mockito.Mockito.mock(Player.class);
+        when(player.getUniqueId()).thenReturn(playerUuid);
+        when(player.getUsername()).thenReturn("RetiredPlayer");
+        when(player.getRemoteAddress()).thenReturn(new InetSocketAddress("192.0.2.92", 25565));
+        when(authCache.isPlayerAuthorized(playerUuid, "192.0.2.92")).thenReturn(true);
+
+        // no activateConnection(player): the connection was never registered / is already retired
+        authListener.onServerConnected(new ServerConnectedEvent(player, backendServerNamed("survival"), null));
+
+        verify(connectionManager, org.mockito.Mockito.never()).announceAuthenticated(org.mockito.ArgumentMatchers.eq(player), org.mockito.ArgumentMatchers.any());
+    }
     @Test
     void onServerConnected_authHeaderWithHexFormatting_parsesColors() throws Exception {
         messages = new Messages() {

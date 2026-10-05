@@ -2,6 +2,15 @@
 
 All notable user-visible changes to VeloAuth are documented in this file.
 
+## [Unreleased]
+
+### Added
+
+- `PlayerAuthenticatedEvent` (`net.rafalohaki.veloauth.api.event`): fired once per connection when a player is
+  authenticated and can actually play (limbo mode: connected to a backend; in-place mode: the backend acknowledged
+  the unlock). It carries the method (`login`, `register`, `totp`, `premium`, `session`), the premium flag and the
+  server name, only as plain types, so other plugins can listen to it without depending on VeloAuth.
+
 ## [1.6.2] - 2026-09-21
 
 ### Added

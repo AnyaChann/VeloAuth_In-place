@@ -288,7 +288,8 @@ class TwoFactorCommand implements SimpleCommand {
         AuthenticationContext authContext = new AuthenticationContext(
                 player, dbPlayer.getNickname(),
                 PlayerAddressUtils.getPlayerAddress(player), dbPlayer, operation);
-        if (PostAuthFlow.execute(ctx, authContext, dbPlayer, "logged in (2FA)")) {
+        if (PostAuthFlow.execute(ctx, authContext, dbPlayer, "logged in (2FA)",
+                net.rafalohaki.veloauth.api.event.PlayerAuthenticatedEvent.METHOD_TOTP)) {
             ctx.runIfConnectionCurrent(operation, () -> {
                 emit(AuditEventType.TWO_FACTOR_VERIFY_OK, dbPlayer.getNickname(),
                         PlayerAddressUtils.getPlayerIp(player), null);

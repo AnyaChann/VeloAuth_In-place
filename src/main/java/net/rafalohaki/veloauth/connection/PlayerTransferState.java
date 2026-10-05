@@ -25,6 +25,8 @@ final class PlayerTransferState {
     private final AtomicReference<ScheduledTask> authReadyRetry = new AtomicReference<>();
     private final AtomicReference<ScheduledTask> unlockRetry = new AtomicReference<>();
     private final AtomicReference<InPlaceUnlocker.Attempt> unlockAttempt = new AtomicReference<>();
+    private final AtomicReference<String> authMethod = new AtomicReference<>();
+    private final AtomicBoolean authAnnounced = new AtomicBoolean();
     private final AtomicReference<CompletableFuture<Boolean>> authReadyRetryCompletion = new AtomicReference<>();
 
     PlayerTransferState(UUID playerId, Player owner, long generation) {
@@ -88,6 +90,16 @@ final class PlayerTransferState {
 
     AtomicReference<CompletableFuture<Boolean>> authReadyRetryCompletion() {
         return authReadyRetryCompletion;
+    }
+
+    /** How THIS connection authenticated (login, register, totp); null when it did not authenticate itself. */
+    AtomicReference<String> authMethod() {
+        return authMethod;
+    }
+
+    /** Set once PlayerAuthenticatedEvent was fired for THIS connection. */
+    AtomicBoolean authAnnounced() {
+        return authAnnounced;
     }
 
     void cancelTasks() {
