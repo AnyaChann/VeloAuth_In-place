@@ -741,7 +741,12 @@ final class BackendTransferCoordinator {
         state.unlockAttempt().set(attempt);
         try {
             sendUnlockAttempt(player, state, attempt);
-            return BackendTransferOutcome.WAITING_FOR_UNLOCK;
+            if (attempt.acknowledged()) {
+                return BackendTransferOutcome.CONNECTED;
+            }
+            return state.unlockAttempt().get() == attempt
+                    ? BackendTransferOutcome.WAITING_FOR_UNLOCK
+                    : BackendTransferOutcome.REJECTED;
         } catch (RuntimeException failure) {
             state.unlockAttempt().compareAndSet(attempt, null);
             logger.error("In-place unlock failed unexpectedly for {}: {}",
