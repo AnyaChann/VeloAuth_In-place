@@ -136,6 +136,25 @@ public final class SettingsValidator {
             throw new IllegalArgumentException("connection.auto-transfer-delay-ms must be <= 30000 (30s)");
         }
 
+        if (settings.getInPlaceUnlockRetryIntervalMillis() <= 0
+                || settings.getInPlaceUnlockRetryIntervalMillis() > 30_000) {
+            throw new IllegalArgumentException(
+                    "connection.in-place-unlock-retry-interval-ms must be in range 1-30000 (30s)");
+        }
+
+        if (settings.getInPlaceUnlockTimeoutMillis() <= 0
+                || settings.getInPlaceUnlockTimeoutMillis() > 120_000) {
+            throw new IllegalArgumentException(
+                    "connection.in-place-unlock-timeout-ms must be in range 1-120000 (120s)");
+        }
+
+        if (settings.getInPlaceUnlockRetryIntervalMillis()
+                > settings.getInPlaceUnlockTimeoutMillis()) {
+            throw new IllegalArgumentException(
+                    "connection.in-place-unlock-retry-interval-ms must not exceed "
+                            + "connection.in-place-unlock-timeout-ms");
+        }
+
         if (settings.getDatabaseConnectionPoolSize() <= 0) {
             throw new IllegalArgumentException("Connection pool size must be > 0");
         }
