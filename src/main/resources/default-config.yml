@@ -154,20 +154,18 @@ session-cookie:
 
 # Connection settings
 connection:
-  # Connection timeout in seconds
-  # Should be <= Velocity read-timeout (default 30s)
+  # Connection timeout for backend/auth server connections.
   timeout-seconds: 30
-  # Ping timeout in milliseconds for pre-transfer availability checks
-  # (auth-server readiness, forced-host target, try-list / fallback backends).
-  # Heavy JVM backend servers with large heaps and long GC pauses may not
-  # answer a ping within the default 3000ms — raise this (e.g. 5000) to give
-  # them more room. Too high delays fallback when a server is genuinely down.
+  # Ping timeout used when checking server readiness.
   ping-timeout-ms: 3000
-  # Minimum dwell time in auth/limbo before an automatic backend transfer.
-  # This compatibility buffer gives modded clients time to initialize their
-  # first world. PlayerSettingsChangedEvent is not a world-readiness signal.
-  # 0 disables the buffer; values above 30000 are rejected.
+  # Delay before automatic transfer in external/embedded auth-server mode.
   auto-transfer-delay-ms: 1500
+  # In in-place mode, unlock starts immediately after the backend connection is observed.
+  # This is the retry interval while waiting for a Gate ACK or backend readiness.
+  in-place-unlock-retry-interval-ms: 5000
+  # Total fail-closed deadline for one in-place unlock sequence.
+  # This does NOT track client-side modpack loading time; it only bounds backend auth readiness.
+  in-place-unlock-timeout-ms: 30000
 
 # Security settings for password hashing and brute-force protection
 security:
