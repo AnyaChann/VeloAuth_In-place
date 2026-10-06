@@ -170,7 +170,9 @@ final class InPlaceUnlocker {
      * ignored. Never logs the payload.
      */
     boolean acknowledge(Player player, Attempt attempt, byte[] data) {
-        if (data == null || data.length > MAX_ACK_BYTES) {
+        // The total unlock deadline is a hard authentication boundary. A scheduler delay must
+        // never turn an ACK arriving after that deadline into a successful authentication.
+        if (attempt.expired() || data == null || data.length > MAX_ACK_BYTES) {
             return false;
         }
         String[] parts = new String(data, StandardCharsets.UTF_8).split("\\|", -1);
