@@ -31,10 +31,7 @@ final class BackendTransferCoordinator {
     private static final int BACKEND_WAIT_REMINDER_INTERVAL = 6;
     private static final int MAX_BACKEND_WAIT_RETRIES = 60;
     private static final long BACKEND_WAIT_INTERVAL_SECONDS = 5;
-    /** In-place unlock: how long to wait for the backend's ACK before the next attempt. */
-    private static final long UNLOCK_ACK_TIMEOUT_MILLIS = 2_000L;
-    /** In-place unlock: total attempts (first send plus retries) before failing closed. */
-    private static final int MAX_UNLOCK_ATTEMPTS = 3;
+    /** In-place unlock retries are bounded by a total deadline rather than a fixed attempt count. */
 
     private final ConnectionManager lifecycle;
     private final BackendSelector backendSelector;
@@ -706,16 +703,10 @@ final class BackendTransferCoordinator {
         }
 
         if (settings.getAuthServerMode() == Settings.AuthServerMode.IN_PLACE) {
-            // The backend is the player's current server: no transfer exists, so signal the
-            // unlock in place instead of running the backend selection and retry machinery.
-            // Still goes through auto-transfer-delay-ms: right after ServerConnectedEvent,
-            // player.getCurrentServer() can still be empty for a modded backend (its FML
-            // handshake has not settled yet), so an immediate call sees onAuthServer=false
-            // and skips the unlock. The delay is the same compatibility buffer external mode
-            // relies on for modded clients.
-            scheduleOwnedTask(state, state.pendingTransfer(),
-                    settings.getAutoTransferDelayMillis(), TimeUnit.MILLISECONDS,
-                    () -> runInPlaceUnlock(player, state));
+            // In-place authentication must not guess backend readiness with a fixed startup
+            // delay. Start immediately and let the connection-local unlock sequence retry until
+            // its total fail-closed deadline expires.
+            runInPlaceUnlock(player, state);
             return;
         }
         scheduleOwnedTask(state, state.pendingTransfer(),
@@ -728,49 +719,91 @@ final class BackendTransferCoordinator {
     }
 
     /**
-     * Shared in-place unlock logic. Used both by the delayed, ServerConnectedEvent-driven
-     * caller (runInPlaceUnlock, right after the player first connects) and synchronously by
-     * transfer(Player, PlayerTransferState) (right after /login or /register succeeds, via
-     * PostAuthFlow -> ConnectionManager#transferToBackend -> BackendTransferCoordinator#transfer
-     * -- a second, previously-unpatched entry point that bypassed IN_PLACE entirely and fell
-     * through to findAvailableBackendServer, which always excludes the auth server itself).
+     * Shared in-place unlock logic. The first send starts as soon as the auth-server connection
+     * is observed. If the server connection is not yet visible to Velocity, the same
+     * connection-owned sequence waits and retries until the configured total deadline.
      */
     private BackendTransferOutcome performInPlaceUnlock(Player player, PlayerTransferState state) {
-        if (isStale(state) || !player.isActive() || !isPlayerOnAuthServer(player)) {
-            logger.info("In-place unlock skipped for {} (stale={}, active={}, onAuthServer={})",
-                    player.getUsername(), isStale(state), player.isActive(), isPlayerOnAuthServer(player));
+        if (isStale(state) || !player.isActive()) {
+            logger.debug("In-place unlock skipped for {} (stale={}, active={})",
+                    player.getUsername(), isStale(state), player.isActive());
             return BackendTransferOutcome.REJECTED;
         }
-        InPlaceUnlocker.Attempt attempt = new InPlaceUnlocker.Attempt();
+
+        InPlaceUnlocker.Attempt existing = state.unlockAttempt().get();
+        if (existing != null && !existing.acknowledged()) {
+            logger.debug("In-place unlock already pending for {}", player.getUsername());
+            return BackendTransferOutcome.WAITING_FOR_UNLOCK;
+        }
+
+        InPlaceUnlocker.Attempt attempt =
+                new InPlaceUnlocker.Attempt(settings.getInPlaceUnlockTimeoutMillis());
         state.unlockAttempt().set(attempt);
-        boolean sent = sendUnlockAttempt(player, state, attempt);
-        return sent ? BackendTransferOutcome.CONNECTED : BackendTransferOutcome.REJECTED;
+        try {
+            sendUnlockAttempt(player, state, attempt);
+            return BackendTransferOutcome.WAITING_FOR_UNLOCK;
+        } catch (RuntimeException failure) {
+            state.unlockAttempt().compareAndSet(attempt, null);
+            logger.error("In-place unlock failed unexpectedly for {}: {}",
+                    player.getUsername(), failure.toString());
+            return BackendTransferOutcome.REJECTED;
+        }
     }
 
     /**
-     * Sends one unlock attempt and arms the ACK timeout. A successful send only means the
-     * message was accepted for sending; the unlock is complete only once a matching, valid ACK
-     * arrives (see handleInPlaceUnlockAck). The timeout task is owned by the connection state,
-     * so a disconnect, reconnect or new login cancels it.
+     * Sends one unlock packet when the player is actually attached to the in-place auth server.
+     * A missing current server is treated as readiness lag, not a failed authentication.
      */
-    private boolean sendUnlockAttempt(
+    private void sendUnlockAttempt(
             Player player, PlayerTransferState state, InPlaceUnlocker.Attempt attempt) {
+        if (isStale(state) || attempt.acknowledged() || !player.isActive()) {
+            return;
+        }
+        if (attempt.expired()) {
+            failInPlaceUnlock(player, state, attempt, "total timeout reached before send");
+            return;
+        }
+
+        if (player.getCurrentServer().isEmpty()) {
+            logger.info("In-place unlock waiting for backend readiness for {} ({} ms remaining)",
+                    player.getUsername(), attempt.remainingMillis());
+            scheduleUnlockRetry(player, state, attempt);
+            return;
+        }
+        if (!isPlayerOnAuthServer(player)) {
+            logger.warn("In-place unlock aborted for {}: current server is not the configured auth server",
+                    player.getUsername());
+            state.unlockAttempt().compareAndSet(attempt, null);
+            return;
+        }
+
         int number = attempt.nextAttemptNumber();
         boolean sent = inPlaceUnlocker.unlock(player, attempt);
-        logger.info("In-place unlock attempt {}/{} for {}: sent={}",
-                number, MAX_UNLOCK_ATTEMPTS, player.getUsername(), sent);
-        if (!sent && number == 1) {
-            // Nothing was sent (no current server / signing failure): keep the old
-            // rejected outcome instead of waiting for an ACK that cannot arrive.
-            state.unlockAttempt().compareAndSet(attempt, null);
-            return false;
+        logger.info("In-place unlock packet attempt {} for {}: sent={}, elapsed={} ms",
+                number, player.getUsername(), sent, attempt.elapsedMillis());
+
+        if (sent) {
+            logger.debug("In-place unlock ACK pending for {}", player.getUsername());
         }
-        scheduleOwnedTask(state, state.unlockRetry(), UNLOCK_ACK_TIMEOUT_MILLIS,
-                TimeUnit.MILLISECONDS, () -> onUnlockAckTimeout(player, state, attempt));
-        return true;
+        scheduleUnlockRetry(player, state, attempt);
     }
 
-    private void onUnlockAckTimeout(
+    private void scheduleUnlockRetry(
+            Player player, PlayerTransferState state, InPlaceUnlocker.Attempt attempt) {
+        if (isStale(state) || state.unlockAttempt().get() != attempt || attempt.acknowledged()) {
+            return;
+        }
+        long remaining = attempt.remainingMillis();
+        if (remaining <= 0L) {
+            failInPlaceUnlock(player, state, attempt, "total timeout reached while waiting for ACK");
+            return;
+        }
+        long delay = Math.min(settings.getInPlaceUnlockRetryIntervalMillis(), remaining);
+        scheduleOwnedTask(state, state.unlockRetry(), delay, TimeUnit.MILLISECONDS,
+                () -> onUnlockRetry(player, state, attempt));
+    }
+
+    private void onUnlockRetry(
             Player player, PlayerTransferState state, InPlaceUnlocker.Attempt attempt) {
         if (isStale(state) || state.unlockAttempt().get() != attempt || attempt.acknowledged()) {
             return;
@@ -778,18 +811,24 @@ final class BackendTransferCoordinator {
         if (!player.isActive()) {
             return;
         }
-        if (attempt.attemptsMade() >= MAX_UNLOCK_ATTEMPTS) {
-            // Do not assume the backend is unlocked. The gate keeps the player frozen, so
-            // fail closed with a clear disconnect instead of leaving them stuck.
-            logger.warn("In-place unlock for {} was not acknowledged after {} attempts ({} ms) "
-                            + "- disconnecting",
-                    player.getUsername(), attempt.attemptsMade(), attempt.elapsedMillis());
-            state.unlockAttempt().compareAndSet(attempt, null);
-            player.disconnect(messages.component(CONNECTION_ERROR_GAME_SERVER, NamedTextColor.RED,
-                    messages.get(MSG_ERROR_UNKNOWN)));
+        if (attempt.expired()) {
+            failInPlaceUnlock(player, state, attempt, "total timeout reached");
             return;
         }
         sendUnlockAttempt(player, state, attempt);
+    }
+
+    private void failInPlaceUnlock(
+            Player player, PlayerTransferState state, InPlaceUnlocker.Attempt attempt, String reason) {
+        if (isStale(state) || state.unlockAttempt().get() != attempt || attempt.acknowledged()) {
+            return;
+        }
+        logger.warn("In-place unlock timed out for {} after {} ms (attempts={}): {} - disconnecting",
+                player.getUsername(), attempt.elapsedMillis(), attempt.attemptsMade(), reason);
+        state.unlockAttempt().compareAndSet(attempt, null);
+        ScheduledTaskRegistry.cancel(state.unlockRetry());
+        player.disconnect(messages.component(
+                CONNECTION_ERROR_GAME_SERVER, NamedTextColor.RED, messages.get(MSG_ERROR_UNKNOWN)));
     }
 
     /**
