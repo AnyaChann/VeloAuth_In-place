@@ -65,6 +65,8 @@ class BackendTransferCoordinatorTest {
         when(lifecycle.resetTasksIfCurrent(state, false)).thenReturn(true);
         when(lifecycle.scheduleOwnedTask(any(), any(), anyLong(), any(), any()))
                 .thenReturn(true);
+        when(settings.getInPlaceUnlockRetryIntervalMillis()).thenReturn(5_000);
+        when(settings.getInPlaceUnlockTimeoutMillis()).thenReturn(30_000);
         when(selector.resolveForcedHostTarget(player, state)).thenReturn(Optional.empty());
     }
 
@@ -114,7 +116,7 @@ class BackendTransferCoordinatorTest {
 
         BackendTransferOutcome outcome = coordinator.transfer(player);
 
-        assertSame(BackendTransferOutcome.CONNECTED, outcome);
+        assertSame(BackendTransferOutcome.WAITING_FOR_UNLOCK, outcome);
         verify(selector, never()).findAvailableBackendServer(any());
         verify(connection).sendPluginMessage(any(), any(byte[].class));
     }
@@ -131,7 +133,7 @@ class BackendTransferCoordinatorTest {
         verify(selector, never()).findAvailableBackendServer(any());
     }
 
-    // ---- In-place unlock: ACK, timeout, bounded retry (TDS sections 8 and 11) ----
+    // ---- In-place unlock: ACK, readiness retry, and total deadline ----
 
     private static final String ACK_SECRET =
             "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcd";
@@ -172,10 +174,10 @@ class BackendTransferCoordinatorTest {
     }
 
     @Test
-    void inPlaceUnlock_SendSuccess_ArmsAnAckTimeoutInsteadOfTrustingTheSend() {
+    void inPlaceUnlock_SendSuccess_WaitsForAckInsteadOfTreatingTheSendAsCompletion() {
         ServerConnection connection = inPlaceReady();
 
-        assertSame(BackendTransferOutcome.CONNECTED, coordinator.transfer(player));
+        assertSame(BackendTransferOutcome.WAITING_FOR_UNLOCK, coordinator.transfer(player));
 
         verify(connection, times(1)).sendPluginMessage(any(), any(byte[].class));
         lastScheduledTimeout();
@@ -199,18 +201,14 @@ class BackendTransferCoordinatorTest {
     }
 
     @Test
-    void inPlaceUnlock_NoAck_RetriesWithFreshNoncesThenFailsClosedAfterTheLimit() {
+    void inPlaceUnlock_NoAck_RetriesUntilTheTotalDeadlineThenFailsClosed() {
         ServerConnection connection = inPlaceReady();
+        when(settings.getInPlaceUnlockTimeoutMillis()).thenReturn(0);
         coordinator.transfer(player);
 
         lastScheduledTimeout().run();
-        lastScheduledTimeout().run();
-        verify(connection, times(3)).sendPluginMessage(any(), any(byte[].class));
-        verify(player, never()).disconnect(nullable(Component.class));
 
-        lastScheduledTimeout().run();
-
-        verify(connection, times(3)).sendPluginMessage(any(), any(byte[].class));
+        verify(connection, times(1)).sendPluginMessage(any(), any(byte[].class));
         verify(player).disconnect(nullable(Component.class));
     }
 
@@ -304,7 +302,7 @@ class BackendTransferCoordinatorTest {
     void inPlaceUnlock_SendingTheUnlock_DoesNotAnnounceBeforeTheAck() {
         inPlaceReady();
 
-        assertSame(BackendTransferOutcome.CONNECTED, coordinator.transfer(player));
+        assertSame(BackendTransferOutcome.WAITING_FOR_UNLOCK, coordinator.transfer(player));
 
         verify(lifecycle, never()).announceAuthenticated(any(PlayerTransferState.class), any());
     }
