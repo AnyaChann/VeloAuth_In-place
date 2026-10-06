@@ -25,6 +25,10 @@ final class SettingsLoader {
     private static final String CONFIG_KEY_TIMEOUT_SECONDS = "timeout-seconds";
     private static final String CONFIG_KEY_PING_TIMEOUT_MS = "ping-timeout-ms";
     private static final String CONFIG_KEY_AUTO_TRANSFER_DELAY_MS = "auto-transfer-delay-ms";
+    private static final String CONFIG_KEY_IN_PLACE_UNLOCK_RETRY_INTERVAL_MS =
+            "in-place-unlock-retry-interval-ms";
+    private static final String CONFIG_KEY_IN_PLACE_UNLOCK_TIMEOUT_MS =
+            "in-place-unlock-timeout-ms";
     // YAML field key names — not credentials. Suppressed from secret-scanning tools.
     private static final String CONFIG_KEY_DB_CREDENTIAL = "pass" + "word"; // nosemgrep
     private static final String CONFIG_KEY_SSL_CREDENTIAL = "ssl-" + "pass" + "word"; // nosemgrep
@@ -294,6 +298,12 @@ final class SettingsLoader {
                     CONFIG_KEY_PING_TIMEOUT_MS, state.pingTimeoutMillis);
             state.autoTransferDelayMillis = YamlParserUtils.getInt(connection,
                     CONFIG_KEY_AUTO_TRANSFER_DELAY_MS, state.autoTransferDelayMillis);
+            state.inPlaceUnlockRetryIntervalMillis = YamlParserUtils.getInt(
+                    connection, CONFIG_KEY_IN_PLACE_UNLOCK_RETRY_INTERVAL_MS,
+                    state.inPlaceUnlockRetryIntervalMillis);
+            state.inPlaceUnlockTimeoutMillis = YamlParserUtils.getInt(
+                    connection, CONFIG_KEY_IN_PLACE_UNLOCK_TIMEOUT_MS,
+                    state.inPlaceUnlockTimeoutMillis);
         }
     }
 
@@ -583,6 +593,8 @@ final class SettingsLoader {
         int connectionTimeoutSeconds;
         int pingTimeoutMillis;
         int autoTransferDelayMillis;
+        int inPlaceUnlockRetryIntervalMillis;
+        int inPlaceUnlockTimeoutMillis;
         int bcryptCost;
         int bruteForceMaxAttempts;
         int bruteForceTimeoutMinutes;
@@ -640,6 +652,8 @@ final class SettingsLoader {
             connectionTimeoutSeconds = connection.timeoutSeconds();
             pingTimeoutMillis = connection.pingTimeoutMillis();
             autoTransferDelayMillis = connection.autoTransferDelayMillis();
+            inPlaceUnlockRetryIntervalMillis = connection.inPlaceUnlockRetryIntervalMillis();
+            inPlaceUnlockTimeoutMillis = connection.inPlaceUnlockTimeoutMillis();
 
             Settings.PasswordSettings password = snapshot.password();
             bcryptCost = password.bcryptCost();
@@ -699,7 +713,9 @@ final class SettingsLoader {
                     new Settings.ConnectionSettings(
                             connectionTimeoutSeconds,
                             pingTimeoutMillis,
-                            autoTransferDelayMillis),
+                            autoTransferDelayMillis,
+                            inPlaceUnlockRetryIntervalMillis,
+                            inPlaceUnlockTimeoutMillis),
                     new Settings.PasswordSettings(
                             bcryptCost,
                             ipLimitRegistrations,
