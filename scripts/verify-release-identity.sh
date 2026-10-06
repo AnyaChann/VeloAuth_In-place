@@ -14,6 +14,15 @@ fail() {
   exit 1
 }
 
+# Native tools (python3, javap) on Windows are not MSYS-aware: they cannot resolve POSIX-style
+# paths such as /tmp/... produced by pwd/mktemp. Convert when cygpath exists; no-op elsewhere.
+native_path() {
+  if command -v cygpath >/dev/null 2>&1; then
+    cygpath -m -- "$1"
+  else
+    printf '%s\n' "$1"
+  fi
+}
 cleanup_temp_dir() {
   local exit_status=$?
   trap - EXIT
@@ -71,7 +80,7 @@ require_command mktemp
 require_command python3
 require_command rm
 
-PROJECT_VERSION="$(python3 - "${PROJECT_DIR}/pom.xml" <<'PY'
+PROJECT_VERSION="$(python3 - "$(native_path "${PROJECT_DIR}/pom.xml")" <<'PY'
 import re
 import sys
 import xml.etree.ElementTree as ElementTree
@@ -128,7 +137,7 @@ if [[ "${ACTUAL_JAR_NAME}" != "${EXPECTED_JAR_NAME}" ]]; then
   fail "Release JAR name mismatch: expected ${EXPECTED_JAR_NAME}, found ${ACTUAL_JAR_NAME}"
 fi
 
-ARTIFACT_METADATA="$(python3 - "${CANDIDATE_JAR}" <<'PY'
+ARTIFACT_METADATA="$(python3 - "$(native_path "${CANDIDATE_JAR}")" <<'PY'
 import json
 import sys
 import zipfile
@@ -183,7 +192,7 @@ TEMP_DIR="$(mktemp -d "${TEMP_PREFIX}XXXXXX")" \
   || fail "Unable to create a release identity temp directory"
 chmod 700 "${TEMP_DIR}" || fail "Unable to make the release identity temp directory private"
 BUILD_CONSTANTS_FILE="${TEMP_DIR}/BuildConstants.class"
-python3 - "${CANDIDATE_JAR}" "${BUILD_CONSTANTS_FILE}" <<'PY' \
+python3 - "$(native_path "${CANDIDATE_JAR}")" "$(native_path "${BUILD_CONSTANTS_FILE}")" <<'PY' \
   || fail "Failed to inspect packaged BuildConstants"
 import sys
 import zipfile
@@ -207,7 +216,7 @@ except (OSError, ValueError, zipfile.BadZipFile) as error:
 PY
 
 JAVAP_OUTPUT="$(
-  javap -constants "${BUILD_CONSTANTS_FILE}"
+  javap -constants "$(native_path "${BUILD_CONSTANTS_FILE}")"
 )" || fail "Failed to inspect packaged BuildConstants"
 BUILD_CONSTANTS_VERSION="$(
   printf '%s\n' "${JAVAP_OUTPUT}" \
@@ -252,7 +261,7 @@ MANIFEST_PRODUCER="${PROJECT_DIR}/scripts/create-release-manifest.sh"
 MANIFEST_STATUS="not-required"
 if [[ -e "${MANIFEST_FILE}" || -e "${MANIFEST_PRODUCER}" ]]; then
   [[ -f "${MANIFEST_FILE}" ]] || fail "Missing release manifest: $(basename -- "${MANIFEST_FILE}")"
-  MANIFEST_METADATA="$(python3 - "${MANIFEST_FILE}" <<'PY'
+  MANIFEST_METADATA="$(python3 - "$(native_path "${MANIFEST_FILE}")" <<'PY'
 import json
 import sys
 
