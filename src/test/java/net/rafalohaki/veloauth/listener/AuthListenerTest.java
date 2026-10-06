@@ -142,7 +142,7 @@ class AuthListenerTest {
                         settings.getFloodgateUsernamePrefix(),
                         settings.isFloodgateBypassAuthServerEnabled()),
                 new Settings.TwoFactorSettings(),
-                new Settings.ConnectionSettings(30, 3000, 1500),
+                new Settings.ConnectionSettings(30, 3000, 1500, 5000, 30_000),
                 new Settings.ReportSettings(true, false),
                 Set.of()));
         when(settings.getAuthServerName()).thenReturn("auth");
