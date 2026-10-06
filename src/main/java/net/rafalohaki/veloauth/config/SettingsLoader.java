@@ -20,10 +20,15 @@ final class SettingsLoader {
     private static final String YAML_FIELD_ENABLED = "enabled";
     private static final String CONFIG_KEY_DATABASE = "database";
     private static final String CONFIG_KEY_AUTH_SERVER = "auth-server";
+    private static final String CONFIG_KEY_SESSION_COOKIE = "session-cookie";
     private static final String CONFIG_KEY_PICOLIMBO = "picolimbo";
     private static final String CONFIG_KEY_TIMEOUT_SECONDS = "timeout-seconds";
     private static final String CONFIG_KEY_PING_TIMEOUT_MS = "ping-timeout-ms";
     private static final String CONFIG_KEY_AUTO_TRANSFER_DELAY_MS = "auto-transfer-delay-ms";
+    private static final String CONFIG_KEY_IN_PLACE_UNLOCK_RETRY_INTERVAL_MS =
+            "in-place-unlock-retry-interval-ms";
+    private static final String CONFIG_KEY_IN_PLACE_UNLOCK_TIMEOUT_MS =
+            "in-place-unlock-timeout-ms";
     // YAML field key names — not credentials. Suppressed from secret-scanning tools.
     private static final String CONFIG_KEY_DB_CREDENTIAL = "pass" + "word"; // nosemgrep
     private static final String CONFIG_KEY_SSL_CREDENTIAL = "ssl-" + "pass" + "word"; // nosemgrep
@@ -48,6 +53,7 @@ final class SettingsLoader {
         loadDatabaseSettings(config, state);
         loadCacheSettings(config, state);
         loadAuthServerSettings(config, state, logger);
+        loadSessionCookieSettings(config, state);
         loadConnectionSettings(config, state);
         loadSecuritySettings(config, state);
         loadPremiumSettings(config, state, logger);
@@ -211,6 +217,10 @@ final class SettingsLoader {
         // Embedded topology is an explicit opt-in. Removing the key on reload must never retain
         // a previously loaded embedded mode or custom embedded network settings.
         state.authServerMode = Settings.AuthServerMode.EXTERNAL.getConfigValue();
+        state.authServerInPlaceSecret = "";
+        state.sessionCookieEnabled = false;
+        state.sessionCookieSecret = "";
+        state.sessionCookieTtlHours = 24;
         state.embeddedAuthServerSettings = new Settings.EmbeddedAuthServerSettings();
 
         boolean authServerConfigured = config.containsKey(CONFIG_KEY_AUTH_SERVER);
@@ -221,6 +231,8 @@ final class SettingsLoader {
         if (authServerConfigured) {
             state.authServerMode = explicitStringOrDefault(authServer, "mode", state.authServerMode);
             state.authServerName = YamlParserUtils.getString(authServer, "server-name", state.authServerName);
+            state.authServerInPlaceSecret = YamlParserUtils.getString(
+                    authServer, "in-place-secret", state.authServerInPlaceSecret);
             state.authServerTimeoutSeconds = YamlParserUtils.getInt(authServer,
                     CONFIG_KEY_TIMEOUT_SECONDS, state.authServerTimeoutSeconds);
             state.embeddedAuthServerSettings = loadEmbeddedAuthServerSettings(
@@ -234,6 +246,17 @@ final class SettingsLoader {
             state.authServerTimeoutSeconds = YamlParserUtils.getInt(picolimbo,
                     CONFIG_KEY_TIMEOUT_SECONDS, state.authServerTimeoutSeconds);
         }
+    }
+
+    private static void loadSessionCookieSettings(Map<String, Object> config, Builder state) {
+        Map<String, Object> sessionCookie = mapSectionOrEmpty(
+                config, CONFIG_KEY_SESSION_COOKIE, CONFIG_KEY_SESSION_COOKIE);
+        state.sessionCookieEnabled = YamlParserUtils.getBoolean(
+                sessionCookie, YAML_FIELD_ENABLED, state.sessionCookieEnabled);
+        state.sessionCookieSecret = YamlParserUtils.getString(
+                sessionCookie, "secret", state.sessionCookieSecret);
+        state.sessionCookieTtlHours = YamlParserUtils.getInt(
+                sessionCookie, "ttl-hours", state.sessionCookieTtlHours);
     }
 
     private static Settings.EmbeddedAuthServerSettings loadEmbeddedAuthServerSettings(
@@ -275,6 +298,12 @@ final class SettingsLoader {
                     CONFIG_KEY_PING_TIMEOUT_MS, state.pingTimeoutMillis);
             state.autoTransferDelayMillis = YamlParserUtils.getInt(connection,
                     CONFIG_KEY_AUTO_TRANSFER_DELAY_MS, state.autoTransferDelayMillis);
+            state.inPlaceUnlockRetryIntervalMillis = YamlParserUtils.getInt(
+                    connection, CONFIG_KEY_IN_PLACE_UNLOCK_RETRY_INTERVAL_MS,
+                    state.inPlaceUnlockRetryIntervalMillis);
+            state.inPlaceUnlockTimeoutMillis = YamlParserUtils.getInt(
+                    connection, CONFIG_KEY_IN_PLACE_UNLOCK_TIMEOUT_MS,
+                    state.inPlaceUnlockTimeoutMillis);
         }
     }
 
@@ -556,10 +585,16 @@ final class SettingsLoader {
         double premiumRefreshThreshold;
         String authServerMode;
         String authServerName;
+        String authServerInPlaceSecret;
+        boolean sessionCookieEnabled;
+        String sessionCookieSecret;
+        int sessionCookieTtlHours;
         int authServerTimeoutSeconds;
         int connectionTimeoutSeconds;
         int pingTimeoutMillis;
         int autoTransferDelayMillis;
+        int inPlaceUnlockRetryIntervalMillis;
+        int inPlaceUnlockTimeoutMillis;
         int bcryptCost;
         int bruteForceMaxAttempts;
         int bruteForceTimeoutMinutes;
@@ -606,6 +641,10 @@ final class SettingsLoader {
             Settings.AuthServerConfig authServer = snapshot.authServer();
             authServerMode = authServer.mode();
             authServerName = authServer.serverName();
+            authServerInPlaceSecret = authServer.inPlaceSecret();
+            sessionCookieEnabled = snapshot.sessionCookie().enabled();
+            sessionCookieSecret = snapshot.sessionCookie().secretHex();
+            sessionCookieTtlHours = snapshot.sessionCookie().ttlHours();
             authServerTimeoutSeconds = authServer.timeoutSeconds();
             embeddedAuthServerSettings = authServer.embedded();
 
@@ -613,6 +652,8 @@ final class SettingsLoader {
             connectionTimeoutSeconds = connection.timeoutSeconds();
             pingTimeoutMillis = connection.pingTimeoutMillis();
             autoTransferDelayMillis = connection.autoTransferDelayMillis();
+            inPlaceUnlockRetryIntervalMillis = connection.inPlaceUnlockRetryIntervalMillis();
+            inPlaceUnlockTimeoutMillis = connection.inPlaceUnlockTimeoutMillis();
 
             Settings.PasswordSettings password = snapshot.password();
             bcryptCost = password.bcryptCost();
@@ -665,11 +706,16 @@ final class SettingsLoader {
                             authServerMode,
                             authServerName,
                             authServerTimeoutSeconds,
-                            embeddedAuthServerSettings),
+                            embeddedAuthServerSettings,
+                            authServerInPlaceSecret),
+                    new Settings.SessionCookieConfig(
+                            sessionCookieEnabled, sessionCookieSecret, sessionCookieTtlHours),
                     new Settings.ConnectionSettings(
                             connectionTimeoutSeconds,
                             pingTimeoutMillis,
-                            autoTransferDelayMillis),
+                            autoTransferDelayMillis,
+                            inPlaceUnlockRetryIntervalMillis,
+                            inPlaceUnlockTimeoutMillis),
                     new Settings.PasswordSettings(
                             bcryptCost,
                             ipLimitRegistrations,

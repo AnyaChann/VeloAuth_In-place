@@ -204,7 +204,8 @@ class RegisterCommand implements SimpleCommand {
             return;
         }
 
-        if (PostAuthFlow.execute(ctx, authContext, newPlayer, "registered")) {
+        if (PostAuthFlow.execute(ctx, authContext, newPlayer, "registered",
+                net.rafalohaki.veloauth.api.event.PlayerAuthenticatedEvent.METHOD_REGISTER)) {
             ctx.runIfConnectionCurrent(authContext.connectionOperation(), () -> {
                 authContext.player().sendMessage(ctx.messages().component(
                         "auth.register.success", NamedTextColor.GREEN));

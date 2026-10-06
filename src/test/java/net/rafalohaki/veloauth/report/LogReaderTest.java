@@ -35,12 +35,13 @@ class LogReaderTest {
 
     @Test
     void resolveProxyRoot_absoluteDataDir_walksToProxyRoot() {
-        Path pluginDir = Path.of("/srv/velocity/plugins/veloauth");
+        Path proxyRootFixture = Path.of(System.getProperty("user.dir"), "srv", "velocity");
+        Path pluginDir = proxyRootFixture.resolve(Path.of("plugins", "veloauth"));
 
-        Path proxyRoot = LogReader.resolveProxyRoot(pluginDir);
+        Path resolvedProxyRoot = LogReader.resolveProxyRoot(pluginDir);
 
-        assertEquals(Path.of("/srv/velocity"), proxyRoot,
-                () -> "Absolute data dir must resolve to the proxy root, got: " + proxyRoot);
+        assertEquals(proxyRootFixture.normalize(), resolvedProxyRoot,
+                () -> "Absolute data dir must resolve to the proxy root, got: " + resolvedProxyRoot);
     }
 
     @Test
@@ -58,11 +59,12 @@ class LogReaderTest {
 
     @Test
     void resolveLogPath_absoluteDataDir_pointsAtProxyRootLogs() {
-        Path pluginDir = Path.of("/srv/velocity/plugins/veloauth");
+        Path proxyRootFixture = Path.of(System.getProperty("user.dir"), "srv", "velocity");
+        Path pluginDir = proxyRootFixture.resolve(Path.of("plugins", "veloauth"));
 
         Path logPath = LogReader.resolveLogPath(pluginDir);
 
-        assertEquals(Path.of("/srv/velocity/logs/latest.log"), logPath,
+        assertEquals(proxyRootFixture.resolve(Path.of("logs", "latest.log")).normalize(), logPath,
                 () -> "Log path must be <proxy-root>/logs/latest.log: " + logPath);
     }
 }

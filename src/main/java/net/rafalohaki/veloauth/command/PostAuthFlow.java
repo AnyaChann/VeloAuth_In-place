@@ -6,6 +6,7 @@ import net.rafalohaki.veloauth.model.CachedAuthUser;
 import net.rafalohaki.veloauth.model.RegisteredPlayer;
 import net.rafalohaki.veloauth.util.PlayerAddressUtils;
 import net.rafalohaki.veloauth.util.UuidUtils;
+import org.slf4j.Logger;
 import org.slf4j.Marker;
 import org.slf4j.MarkerFactory;
 
@@ -34,6 +35,17 @@ final class PostAuthFlow {
      */
     static boolean execute(CommandContext ctx, AuthenticationContext authContext,
                            RegisteredPlayer player, String operationName) {
+        return execute(ctx, authContext, player, operationName,
+                net.rafalohaki.veloauth.api.event.PlayerAuthenticatedEvent.METHOD_LOGIN);
+    }
+
+    /**
+     * Same as {@link #execute(CommandContext, AuthenticationContext, RegisteredPlayer, String)} but names how the
+     * player authenticated (one of the {@code PlayerAuthenticatedEvent.METHOD_*} constants), which is remembered
+     * for the PlayerAuthenticatedEvent fired once the player can actually play.
+     */
+    static boolean execute(CommandContext ctx, AuthenticationContext authContext,
+                           RegisteredPlayer player, String operationName, String method) {
         var connectionOperation = authContext.connectionOperation();
         if (!ctx.isConnectionCurrent(connectionOperation)) {
             return false;
@@ -64,6 +76,7 @@ final class PostAuthFlow {
             ctx.resetSecurityCounters(authContext.playerAddress(), authContext.username());
             // Cancel the auth-server timeout: player has successfully authenticated.
             ctx.plugin().getAuthTimeoutScheduler().cancel(p.getUniqueId());
+            recordAuthMethod(ctx, p, method);
         });
         if (!authorized) {
             return false;
@@ -109,7 +122,50 @@ final class PostAuthFlow {
                             authContext.username(), operationName, throwable);
                     return false;
         });
+
+        issueSessionCookieIfEnabled(ctx, p, player);
+
         return true;
+    }
+
+    /**
+     * EXPERIMENTAL - DO NOT USE IN PRODUCTION (see SessionCookieListener's class Javadoc). Only
+     * runs when session-cookie.enabled is true, which defaults to false and is not meant to be
+     * turned on right now.
+     *
+     * Best-effort: a signing failure here must never fail an otherwise-successful login. The
+     * player just won't get a "remember me" cookie for this session and will type their
+     * password again next time, exactly like today's behavior with the feature disabled.
+     */
+    private static void issueSessionCookieIfEnabled(
+            CommandContext ctx, Player p, RegisteredPlayer player) {
+        if (!ctx.settings().isSessionCookieEnabled()) {
+            return;
+        }
+        String hash = player.getHash();
+        if (hash == null || hash.isBlank()) {
+            return;
+        }
+        try {
+            byte[] token = SessionCookieCodec.buildToken(
+                    p.getUniqueId(), ctx.settings().getSessionCookieTtlHours(),
+                    hash, ctx.settings().getSessionCookieSecret());
+            p.storeCookie(SessionCookieCodec.COOKIE_KEY, token);
+        } catch (java.security.GeneralSecurityException e) {
+            Logger logger = ctx.logger();
+            if (logger.isErrorEnabled()) {
+                logger.error(AUTH_MARKER, "Failed to sign session cookie for {}: {}",
+                        p.getUsername(), e.toString());
+            }
+        }
+    }
+
+    /** Best-effort: remembering the method must never fail an otherwise-successful authentication. */
+    private static void recordAuthMethod(CommandContext ctx, Player p, String method) {
+        var connectionManager = ctx.plugin().getConnectionManager();
+        if (connectionManager != null) {
+            connectionManager.recordAuthMethod(p, method);
+        }
     }
 
     private static UUID storedPremiumUuid(RegisteredPlayer player, boolean isPremium) {

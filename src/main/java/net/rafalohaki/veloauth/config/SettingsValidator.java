@@ -136,6 +136,25 @@ public final class SettingsValidator {
             throw new IllegalArgumentException("connection.auto-transfer-delay-ms must be <= 30000 (30s)");
         }
 
+        if (settings.getInPlaceUnlockRetryIntervalMillis() <= 0
+                || settings.getInPlaceUnlockRetryIntervalMillis() > 30_000) {
+            throw new IllegalArgumentException(
+                    "connection.in-place-unlock-retry-interval-ms must be in range 1-30000 (30s)");
+        }
+
+        if (settings.getInPlaceUnlockTimeoutMillis() <= 0
+                || settings.getInPlaceUnlockTimeoutMillis() > 120_000) {
+            throw new IllegalArgumentException(
+                    "connection.in-place-unlock-timeout-ms must be in range 1-120000 (120s)");
+        }
+
+        if (settings.getInPlaceUnlockRetryIntervalMillis()
+                > settings.getInPlaceUnlockTimeoutMillis()) {
+            throw new IllegalArgumentException(
+                    "connection.in-place-unlock-retry-interval-ms must not exceed "
+                            + "connection.in-place-unlock-timeout-ms");
+        }
+
         if (settings.getDatabaseConnectionPoolSize() <= 0) {
             throw new IllegalArgumentException("Connection pool size must be > 0");
         }
@@ -146,8 +165,54 @@ public final class SettingsValidator {
         Settings.AuthServerMode mode = Settings.AuthServerMode.parse(settings.getConfiguredAuthServerMode());
 
         String externalServerName = settings.getAuthServerName();
-        if (mode == Settings.AuthServerMode.EXTERNAL && externalServerName.isBlank()) {
+        if ((mode == Settings.AuthServerMode.EXTERNAL || mode == Settings.AuthServerMode.IN_PLACE)
+                && externalServerName.isBlank()) {
             throw new IllegalArgumentException("auth-server.server-name must not be empty");
+        }
+
+        if (mode == Settings.AuthServerMode.IN_PLACE) {
+            String secret = settings.getAuthServerInPlaceSecret();
+            // Fail closed: an unset or malformed secret must stop the proxy from starting in
+            // in-place mode rather than silently sending unsigned unlocks. 64 hex chars = the
+            // 32-byte HMAC-SHA256 key shared with the backend gate mod's own config.
+            if (secret == null || !secret.matches("(?i)^[0-9a-f]{64}$")) {
+                throw new IllegalArgumentException(
+                        "auth-server.in-place-secret must be a 64-character hex string "
+                                + "(32 bytes) when auth-server.mode is 'in-place'. Generate one "
+                                + "with: openssl rand -hex 32 — and set the identical value in "
+                                + "the backend gate mod's config.");
+            }
+        }
+
+        if (settings.isSessionCookieEnabled()) {
+            // EXPERIMENTAL - DO NOT USE: known to kick players with
+            // multiplayer.disconnect.unexpected_query_response on at least one modded backend,
+            // reproducing regardless of delay (confirmed up to 15s), so not a settling-time
+            // issue fixable by tuning auto-transfer-delay-ms. Suspected protocol-level conflict
+            // between Velocity's cookie packets (velocity-api 4.1.2-SNAPSHOT, itself
+            // unreleased) and the backend's own 1.20.5-compatibility mods. Warn loudly rather
+            // than silently allowing this in production.
+            logger.warn("session-cookie.enabled is true, but this feature is EXPERIMENTAL and "
+                    + "known to kick players on at least one modded backend "
+                    + "(multiplayer.disconnect.unexpected_query_response). Do not use in "
+                    + "production until this is resolved.");
+            String cookieSecret = settings.getSessionCookieSecret();
+            // Fail closed for the same reason as the in-place secret above: this key lets a
+            // client skip password verification entirely if it verifies, so an unset or
+            // malformed value must stop the proxy rather than silently disable verification.
+            if (cookieSecret == null || !cookieSecret.matches("(?i)^[0-9a-f]{64}$")) {
+                throw new IllegalArgumentException(
+                        "session-cookie.secret must be a 64-character hex string (32 bytes) "
+                                + "when session-cookie.enabled is true. Generate one with: "
+                                + "openssl rand -hex 32 — keep this value separate from "
+                                + "auth-server.in-place-secret; a leak of this one lets an "
+                                + "attacker forge a passwordless login for any account.");
+            }
+            if (settings.getSessionCookieTtlHours() <= 0) {
+                throw new IllegalArgumentException(
+                        "session-cookie.ttl-hours must be positive when session-cookie.enabled "
+                                + "is true.");
+            }
         }
 
         Settings.EmbeddedAuthServerSettings embedded = settings.getEmbeddedAuthServerSettings();

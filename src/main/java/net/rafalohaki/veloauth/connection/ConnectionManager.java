@@ -402,6 +402,89 @@ public class ConnectionManager {
     }
 
     /**
+     * Routes a backend's in-place unlock ACK (veloauth:ack) to the connection that issued the
+     * unlock. Verification (HMAC, UUID, nonce ownership) happens in the coordinator.
+     */
+    public void handleInPlaceUnlockAck(Player player, byte[] data) {
+        if (backendTransferCoordinator.handleInPlaceUnlockAck(player, data)) {
+            // The backend confirmed the unlock: the player can play now (in-place mode's success moment).
+            announceAuthenticated(player, currentServerName(player));
+        }
+    }
+
+    private static String currentServerName(Player player) {
+        return player.getCurrentServer().map(connection -> connection.getServerInfo().getName()).orElse(null);
+    }
+
+    /**
+     * Remembers how THIS connection authenticated (login, register, totp), so the event fired later says so.
+     * A stale or missing connection state is ignored.
+     */
+    public void recordAuthMethod(Player player, String method) {
+        PlayerTransferState state = currentState(player);
+        if (state != null && !isStale(state)) {
+            state.authMethod().set(method);
+        }
+    }
+
+    /**
+     * Fires {@link net.rafalohaki.veloauth.api.event.PlayerAuthenticatedEvent} at most once per connection.
+     * Call it only when the player is authorized AND can play (on a backend, or the in-place unlock was
+     * acknowledged). Never throws and never blocks: authentication must not depend on other plugins' listeners.
+     * Without a recorded method the player was authorized without typing anything on this connection:
+     * a Mojang-verified connection is {@code premium}, anything else resumed a still-valid {@code session}.
+     * A retired or missing connection state is ignored.
+     */
+    public void announceAuthenticated(Player player) {
+        announceAuthenticated(player, null);
+    }
+
+    /**
+     * Same as {@link #announceAuthenticated(Player)}, naming the backend server the player can play on (the event
+     * can reach listeners before Velocity has finished moving the player there). {@code null} when not known.
+     */
+    public void announceAuthenticated(Player player, String serverName) {
+        try {
+            PlayerTransferState state = currentState(player);
+            if (state != null && !isStale(state)) {
+                announceAuthenticated(state, serverName);
+            }
+        } catch (RuntimeException e) {
+            logger.warn("Could not announce the authentication of {}: {}", player.getUsername(), e.toString());
+        }
+    }
+
+    /**
+     * Same as {@link #announceAuthenticated(Player, String)} for a state the caller already holds. It works on a state that
+     * has just been retired from the map: a successful backend transfer retires the state, and it is not defined
+     * whether Velocity's ServerConnectedEvent is handled before or after that. Both places announce, and the
+     * once-per-connection flag lives on the state object itself, so exactly one of them fires.
+     */
+    void announceAuthenticated(PlayerTransferState state, String serverName) {
+        Player player = state.owner();
+        try {
+            if (!state.authAnnounced().compareAndSet(false, true)) {
+                return;
+            }
+            boolean premium = player.isOnlineMode();
+            String method = state.authMethod().get();
+            if (method == null) {
+                method = premium
+                        ? net.rafalohaki.veloauth.api.event.PlayerAuthenticatedEvent.METHOD_PREMIUM
+                        : net.rafalohaki.veloauth.api.event.PlayerAuthenticatedEvent.METHOD_SESSION;
+            }
+            plugin.getServer().getEventManager().fireAndForget(
+                    new net.rafalohaki.veloauth.api.event.PlayerAuthenticatedEvent(player, method, premium, serverName));
+            if (logger.isDebugEnabled()) {
+                logger.debug("PlayerAuthenticatedEvent fired for {} (method={}, premium={}, server={})",
+                        player.getUsername(), method, premium, serverName);
+            }
+        } catch (RuntimeException e) {
+            logger.warn("Could not announce the authentication of {}: {}", player.getUsername(), e.toString());
+        }
+    }
+
+    /**
      * Selects an available non-auth backend for an initial connection whose Velocity target
      * is the auth server. The returned future preserves the configured {@code try} order and
      * never blocks the caller's event thread.

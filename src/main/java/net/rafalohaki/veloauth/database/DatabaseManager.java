@@ -1330,7 +1330,6 @@ public class DatabaseManager {
             return value;
         }
 
-        @javax.annotation.Nonnull
         public boolean isDatabaseError() {
             return isDatabaseError;
         }

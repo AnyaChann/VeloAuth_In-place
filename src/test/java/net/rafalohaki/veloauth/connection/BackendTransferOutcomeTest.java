@@ -10,6 +10,7 @@ class BackendTransferOutcomeTest {
     @Test
     void accepted_DeferredAndCoalescedOutcomes_PreserveLegacySuccessContract() {
         assertTrue(BackendTransferOutcome.CONNECTED.accepted());
+        assertTrue(BackendTransferOutcome.WAITING_FOR_UNLOCK.accepted());
         assertTrue(BackendTransferOutcome.COALESCED.accepted());
         assertTrue(BackendTransferOutcome.WAITING_FOR_BACKEND.accepted());
         assertTrue(BackendTransferOutcome.FALLBACK_TO_AUTH.accepted());

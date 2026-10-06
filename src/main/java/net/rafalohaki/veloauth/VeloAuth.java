@@ -14,6 +14,7 @@ import net.rafalohaki.veloauth.command.CommandHandler;
 import net.rafalohaki.veloauth.config.Settings;
 import net.rafalohaki.veloauth.connection.AuthTimeoutScheduler;
 import net.rafalohaki.veloauth.connection.ConnectionManager;
+import net.rafalohaki.veloauth.connection.InPlaceUnlockChannelListener;
 import net.rafalohaki.veloauth.database.DatabaseConfig;
 import net.rafalohaki.veloauth.database.DatabaseManager;
 import net.rafalohaki.veloauth.database.DatabaseType;
@@ -88,6 +89,8 @@ public class VeloAuth {
      * published safely on its own so no future call site has to re-derive that reasoning.
      */
     private volatile AuthListener authListener;
+    private volatile Object sessionCookieListener;
+    private volatile InPlaceUnlockChannelListener inPlaceChannelListener;
     private PremiumResolverService premiumResolverService;
     private PremiumResolverAlertService premiumResolverAlertService;
     private AuditLogService auditLogService;
@@ -552,6 +555,9 @@ public class VeloAuth {
         
         commandHandler = new CommandHandler(this, databaseManager, authCache, settings, messages);
         commandHandler.registerCommands();
+
+        sessionCookieListener = commandHandler.createSessionCookieListener();
+        server.getEventManager().register(this, sessionCookieListener);
         
         logger.debug("✅ Commands registered in {} ms", System.currentTimeMillis() - startTime);
     }
@@ -624,6 +630,12 @@ public class VeloAuth {
             preLoginHandler, postLoginHandler, connectionManager, databaseManager, messages);
         
         server.getEventManager().register(this, authListener);
+        if (settings.getAuthServerMode() == Settings.AuthServerMode.IN_PLACE) {
+            // Registers veloauth:unlock / veloauth:ack and routes the backend's signed ACK.
+            inPlaceChannelListener = new InPlaceUnlockChannelListener(connectionManager, logger);
+            inPlaceChannelListener.registerChannels(server);
+            server.getEventManager().register(this, inPlaceChannelListener);
+        }
         logger.debug("✅ Event listeners registered in {} ms (PreLoginHandler + PostLoginHandler + AuthListener)", 
                 System.currentTimeMillis() - startTime);
     }
@@ -706,6 +718,15 @@ public class VeloAuth {
             if (authListener != null) {
                 server.getEventManager().unregisterListener(this, authListener);
                 logger.debug("AuthListener unregistered");
+            }
+            if (sessionCookieListener != null) {
+                server.getEventManager().unregisterListener(this, sessionCookieListener);
+                logger.debug("SessionCookieListener unregistered");
+            }
+            if (inPlaceChannelListener != null) {
+                server.getEventManager().unregisterListener(this, inPlaceChannelListener);
+                inPlaceChannelListener.unregisterChannels(server);
+                logger.debug("InPlaceUnlockChannelListener unregistered");
             }
 
             // 2. Unregister command handlers

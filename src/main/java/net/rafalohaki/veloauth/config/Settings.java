@@ -191,6 +191,16 @@ public class Settings {
         return activeSnapshot().connection().autoTransferDelayMillis();
     }
 
+    /** Delay between in-place unlock sends while waiting for backend readiness or an ACK. */
+    public int getInPlaceUnlockRetryIntervalMillis() {
+        return activeSnapshot().connection().inPlaceUnlockRetryIntervalMillis();
+    }
+
+    /** Maximum total time allowed for one in-place unlock sequence. */
+    public int getInPlaceUnlockTimeoutMillis() {
+        return activeSnapshot().connection().inPlaceUnlockTimeoutMillis();
+    }
+
     public String getDatabaseConnectionParameters() {
         return activeSnapshot().database().connectionParameters();
     }
@@ -233,6 +243,24 @@ public class Settings {
 
     public String getAuthServerName() {
         return activeSnapshot().authServer().serverName();
+    }
+
+    /** Hex-encoded HMAC-SHA256 key for in-place mode. Never log this value. */
+    public String getAuthServerInPlaceSecret() {
+        return activeSnapshot().authServer().inPlaceSecret();
+    }
+
+    public boolean isSessionCookieEnabled() {
+        return activeSnapshot().sessionCookie().enabled();
+    }
+
+    /** Hex-encoded HMAC-SHA256 key for the session-resume cookie. Never log this value. */
+    public String getSessionCookieSecret() {
+        return activeSnapshot().sessionCookie().secretHex();
+    }
+
+    public int getSessionCookieTtlHours() {
+        return activeSnapshot().sessionCookie().ttlHours();
     }
 
     public AuthServerMode getAuthServerMode() {
@@ -411,6 +439,8 @@ public class Settings {
      */
     public enum AuthServerMode {
         EXTERNAL("external"),
+        /** BE doubles as auth server and target; unlock is signalled in place, never transferred. */
+        IN_PLACE("in-place"),
         EMBEDDED("embedded");
 
         private final String configValue;
@@ -428,7 +458,7 @@ public class Settings {
                     .filter(candidate -> candidate.configValue.equals(value))
                     .findFirst()
                     .orElseThrow(() -> new IllegalArgumentException(
-                            "auth-server.mode must be 'external' or 'embedded' (got '" + value + "')"));
+                            "auth-server.mode must be 'external', 'in-place' or 'embedded' (got '" + value + "')"));
         }
     }
 
@@ -682,7 +712,9 @@ public class Settings {
     public record ConnectionSettings(
             int timeoutSeconds,
             int pingTimeoutMillis,
-            int autoTransferDelayMillis) {
+            int autoTransferDelayMillis,
+            int inPlaceUnlockRetryIntervalMillis,
+            int inPlaceUnlockTimeoutMillis) {
     }
 
     public record ReportSettings(boolean enabled, boolean includeLogs) {
@@ -729,11 +761,31 @@ public class Settings {
             double premiumRefreshThreshold) {
     }
 
+    /**
+     * Optional "remember me" cookie for cracked/offline accounts: a signed, expiring token
+     * stored client-side (Minecraft 1.20.5+ cookie protocol) that lets a returning connection
+     * skip the password prompt. Disabled by default - this is a real change to the login
+     * flow's trust model, not something to silently opt everyone into. 2FA is never skipped by
+     * this, regardless of a valid cookie - see LoginCommand's cookie-login path.
+     */
+    record SessionCookieConfig(
+            boolean enabled,
+            /** Hex-encoded (64 chars = 32 bytes) HMAC-SHA256 key. Never log this value. */
+            String secretHex,
+            int ttlHours) {
+    }
+
     record AuthServerConfig(
             String mode,
             String serverName,
             int timeoutSeconds,
-            EmbeddedAuthServerSettings embedded) {
+            EmbeddedAuthServerSettings embedded,
+            /**
+             * Hex-encoded (64 chars = 32 bytes) HMAC-SHA256 key shared with the backend-side
+             * gate mod. Required, and validated to exactly this length, when mode is in-place;
+             * unused otherwise. Never log this value.
+             */
+            String inPlaceSecret) {
     }
 
     record HotSettings(
@@ -748,6 +800,7 @@ public class Settings {
             DatabaseConfig database,
             CacheConfig cache,
             AuthServerConfig authServer,
+            SessionCookieConfig sessionCookie,
             ConnectionSettings connection,
             PasswordSettings password,
             BruteForceSettings bruteForce,
@@ -767,8 +820,9 @@ public class Settings {
                     new CacheConfig(60, 10_000, 5, 60, 24, 0.8),
                     new AuthServerConfig(
                             AuthServerMode.EXTERNAL.getConfigValue(), "limbo", 300,
-                            new EmbeddedAuthServerSettings()),
-                    new ConnectionSettings(30, 3000, 1500),
+                            new EmbeddedAuthServerSettings(), ""),
+                    new SessionCookieConfig(false, "", 24),
+                    new ConnectionSettings(30, 3000, 1500, 5000, 30_000),
                     new PasswordSettings(10, 3, 8, 72, new PasswordPolicy()),
                     new BruteForceSettings(5, 5, 168),
                     new PremiumSettings(),
@@ -784,6 +838,7 @@ public class Settings {
                     database,
                     cache,
                     authServer,
+                    sessionCookie,
                     connection,
                     password,
                     bruteForce,
@@ -797,7 +852,7 @@ public class Settings {
 
         Snapshot withMaximumPasswordLength(int maximum) {
             return new Snapshot(
-                    database, cache, authServer, connection,
+                    database, cache, authServer, sessionCookie, connection,
                     new PasswordSettings(
                             password.bcryptCost,
                             password.ipLimitRegistrations,
@@ -809,7 +864,7 @@ public class Settings {
 
         Snapshot withLanguage(String language) {
             return new Snapshot(
-                    database, cache, authServer, connection, password, bruteForce,
+                    database, cache, authServer, sessionCookie, connection, password, bruteForce,
                     premium, floodgate, alerts, auditLog, twoFactor,
                     new HotSettings(
                             hot.debugEnabled,
