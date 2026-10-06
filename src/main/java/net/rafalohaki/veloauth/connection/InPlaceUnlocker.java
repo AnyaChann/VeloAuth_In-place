@@ -84,8 +84,11 @@ final class InPlaceUnlocker {
                 return;
             }
             long timeoutNanos = java.util.concurrent.TimeUnit.MILLISECONDS.toNanos(timeoutMillis);
-            long remaining = Long.MAX_VALUE - startedNanos;
-            deadlineNanos = timeoutNanos >= remaining
+            // System.nanoTime() may legally be negative, so only perform the overflow check
+            // when the start value is non-negative. With a negative start value, adding a
+            // positive timeout cannot overflow Long.MAX_VALUE.
+            deadlineNanos = startedNanos >= 0L
+                    && timeoutNanos > Long.MAX_VALUE - startedNanos
                     ? Long.MAX_VALUE
                     : startedNanos + timeoutNanos;
         }
