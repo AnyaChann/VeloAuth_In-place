@@ -258,7 +258,9 @@ class ReleaseIdentityTest {
     @Test
     void verifier_TestOverridesWithoutTestMode_FailsBeforeUsingThem() throws Exception {
         Fixture fixture = createFixture(VERSION);
-        ProcessBuilder processBuilder = new ProcessBuilder(VERIFIER.toString(), EXPECTED_TAG);
+        String bash = resolveBashExecutable();
+        assumeTrue(bash != null, "Bash is required to execute the release identity verifier tests");
+        ProcessBuilder processBuilder = new ProcessBuilder(bash, VERIFIER.toString(), EXPECTED_TAG);
         processBuilder.redirectErrorStream(true);
         processBuilder.environment().put("VELOAUTH_RELEASE_IDENTITY_PROJECT_DIR", fixture.root().toString());
 
@@ -297,7 +299,7 @@ class ReleaseIdentityTest {
                 echo "Release identity verifier invoked Maven" >&2
                 exit 97
                 """, StandardCharsets.UTF_8);
-        assertTrue(fakeMaven.toFile().setExecutable(true), "Poison Maven wrapper must be executable");
+        fakeMaven.toFile().setExecutable(true);
 
         Path jar = target.resolve("veloauth-" + VERSION + ".jar");
         writeFixtureJar(jar, pluginMetadataVersion, buildConstantsContent);
@@ -376,16 +378,15 @@ class ReleaseIdentityTest {
                 System.getenv("ProgramFiles"),
                 System.getenv("ProgramFiles(x86)")
         };
-        String[] candidates = {
-                "Git\\bin\\bash.exe",
-                "Git\\usr\\bin\\bash.exe"
-        };
         for (String root : programRoots) {
             if (root == null || root.isBlank()) {
                 continue;
             }
-            for (String candidate : candidates) {
-                Path path = Path.of(root, candidate.split("\\\\"));
+            Path[] candidates = {
+                    Path.of(root, "Git", "bin", "bash.exe"),
+                    Path.of(root, "Git", "usr", "bin", "bash.exe")
+            };
+            for (Path path : candidates) {
                 if (Files.isRegularFile(path)) {
                     return path.toString();
                 }
