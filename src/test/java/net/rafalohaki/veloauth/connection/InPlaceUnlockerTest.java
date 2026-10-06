@@ -220,6 +220,14 @@ class InPlaceUnlockerTest {
     }
 
     @Test
+    void attempt_ZeroDeadline_IsImmediatelyExpired() {
+        InPlaceUnlocker.Attempt attempt = new InPlaceUnlocker.Attempt(0);
+
+        assertTrue(attempt.expired());
+        assertEquals(0, attempt.remainingMillis());
+    }
+
+    @Test
     void attempt_MarkAcknowledged_IsTrueOnlyTheFirstTime() {
         InPlaceUnlocker.Attempt attempt = new InPlaceUnlocker.Attempt();
 
