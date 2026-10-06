@@ -191,6 +191,16 @@ public class Settings {
         return activeSnapshot().connection().autoTransferDelayMillis();
     }
 
+    /** Delay between in-place unlock sends while waiting for backend readiness or an ACK. */
+    public int getInPlaceUnlockRetryIntervalMillis() {
+        return activeSnapshot().connection().inPlaceUnlockRetryIntervalMillis();
+    }
+
+    /** Maximum total time allowed for one in-place unlock sequence. */
+    public int getInPlaceUnlockTimeoutMillis() {
+        return activeSnapshot().connection().inPlaceUnlockTimeoutMillis();
+    }
+
     public String getDatabaseConnectionParameters() {
         return activeSnapshot().database().connectionParameters();
     }
@@ -702,7 +712,9 @@ public class Settings {
     public record ConnectionSettings(
             int timeoutSeconds,
             int pingTimeoutMillis,
-            int autoTransferDelayMillis) {
+            int autoTransferDelayMillis,
+            int inPlaceUnlockRetryIntervalMillis,
+            int inPlaceUnlockTimeoutMillis) {
     }
 
     public record ReportSettings(boolean enabled, boolean includeLogs) {
@@ -810,7 +822,7 @@ public class Settings {
                             AuthServerMode.EXTERNAL.getConfigValue(), "limbo", 300,
                             new EmbeddedAuthServerSettings(), ""),
                     new SessionCookieConfig(false, "", 24),
-                    new ConnectionSettings(30, 3000, 1500),
+                    new ConnectionSettings(30, 3000, 1500, 5000, 30_000),
                     new PasswordSettings(10, 3, 8, 72, new PasswordPolicy()),
                     new BruteForceSettings(5, 5, 168),
                     new PremiumSettings(),
