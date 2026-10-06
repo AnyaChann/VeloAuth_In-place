@@ -125,7 +125,9 @@ class BackendTransferCoordinatorTest {
     void transfer_InPlaceModeNotYetOnAuthServer_RejectsWithoutSearchingForABackend() {
         when(settings.getAuthServerMode()).thenReturn(Settings.AuthServerMode.IN_PLACE);
         when(player.isActive()).thenReturn(true);
+        when(player.getUniqueId()).thenReturn(state.playerId());
         when(lifecycle.isPlayerOnAuthServer(player)).thenReturn(false);
+        when(player.getCurrentServer()).thenReturn(Optional.of(mock(ServerConnection.class)));
 
         BackendTransferOutcome outcome = coordinator.transfer(player);
 
