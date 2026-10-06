@@ -26,6 +26,7 @@ import java.util.jar.JarOutputStream;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.junit.jupiter.api.Assumptions.assumeTrue;
 
 class ReleaseIdentityTest {
 
@@ -82,7 +83,10 @@ class ReleaseIdentityTest {
 
     @Test
     void verifier_ConsistentFixtureUnderColonPath_Succeeds() throws Exception {
-        Fixture fixture = createFixture(VERSION, "identity fixture [safe]: colon", validBuildConstants());
+        String fixtureName = isWindows()
+                ? "identity fixture [safe] colon"
+                : "identity fixture [safe]: colon";
+        Fixture fixture = createFixture(VERSION, fixtureName, validBuildConstants());
 
         VerificationResult result = runVerifier(fixture, EXPECTED_TAG);
 
@@ -336,8 +340,10 @@ class ReleaseIdentityTest {
     }
 
     private VerificationResult runVerifier(Fixture fixture, String expectedTag) throws Exception {
-        assertTrue(Files.isExecutable(VERIFIER), "Release identity verifier must exist and be executable");
-        ProcessBuilder processBuilder = new ProcessBuilder(VERIFIER.toString(), expectedTag);
+        assumeTrue(Files.isRegularFile(VERIFIER), "Release identity verifier script must exist");
+        String bash = resolveBashExecutable();
+        assumeTrue(bash != null, "Bash is required to execute the release identity verifier tests");
+        ProcessBuilder processBuilder = new ProcessBuilder(bash, VERIFIER.toString(), expectedTag);
         processBuilder.redirectErrorStream(true);
         processBuilder.environment().put("VELOAUTH_RELEASE_IDENTITY_TEST_MODE", "true");
         processBuilder.environment().put("VELOAUTH_RELEASE_IDENTITY_PROJECT_DIR", fixture.root().toString());
@@ -347,6 +353,46 @@ class ReleaseIdentityTest {
             assertEquals(0, entries.count(), "Verifier must clean every task-owned temporary directory");
         }
         return result;
+    }
+
+    private static boolean isWindows() {
+        return System.getProperty("os.name", "").toLowerCase(java.util.Locale.ROOT).contains("win");
+    }
+
+    private static String resolveBashExecutable() {
+        String configured = System.getenv("BASH");
+        if (configured != null && !configured.isBlank()) {
+            Path path = Path.of(configured);
+            if (Files.isRegularFile(path)) {
+                return path.toString();
+            }
+        }
+
+        if (!isWindows()) {
+            return "bash";
+        }
+
+        String[] programRoots = {
+                System.getenv("ProgramFiles"),
+                System.getenv("ProgramFiles(x86)")
+        };
+        String[] candidates = {
+                "Git\\bin\\bash.exe",
+                "Git\\usr\\bin\\bash.exe"
+        };
+        for (String root : programRoots) {
+            if (root == null || root.isBlank()) {
+                continue;
+            }
+            for (String candidate : candidates) {
+                Path path = Path.of(root, candidate.split("\\\\"));
+                if (Files.isRegularFile(path)) {
+                    return path.toString();
+                }
+            }
+        }
+
+        return null;
     }
 
     private static VerificationResult runProcess(ProcessBuilder processBuilder) throws Exception {
