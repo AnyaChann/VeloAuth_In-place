@@ -72,6 +72,23 @@ final class InPlaceUnlocker {
         private final AtomicInteger attemptsMade = new AtomicInteger();
         private final AtomicBoolean acknowledged = new AtomicBoolean();
         private final long startedNanos = System.nanoTime();
+        private final long deadlineNanos;
+
+        Attempt() {
+            this(Long.MAX_VALUE);
+        }
+
+        Attempt(long timeoutMillis) {
+            if (timeoutMillis <= 0L) {
+                deadlineNanos = startedNanos;
+                return;
+            }
+            long timeoutNanos = java.util.concurrent.TimeUnit.MILLISECONDS.toNanos(timeoutMillis);
+            long remaining = Long.MAX_VALUE - startedNanos;
+            deadlineNanos = timeoutNanos >= remaining
+                    ? Long.MAX_VALUE
+                    : startedNanos + timeoutNanos;
+        }
 
         int nextAttemptNumber() {
             return attemptsMade.incrementAndGet();
@@ -92,6 +109,18 @@ final class InPlaceUnlocker {
 
         long elapsedMillis() {
             return (System.nanoTime() - startedNanos) / 1_000_000L;
+        }
+
+        boolean expired() {
+            return System.nanoTime() >= deadlineNanos;
+        }
+
+        long remainingMillis() {
+            long remainingNanos = deadlineNanos - System.nanoTime();
+            if (remainingNanos <= 0L) {
+                return 0L;
+            }
+            return Math.max(1L, java.util.concurrent.TimeUnit.NANOSECONDS.toMillis(remainingNanos));
         }
 
         boolean ownsNonce(String nonceHex) {
