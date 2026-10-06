@@ -201,15 +201,43 @@ class BackendTransferCoordinatorTest {
     }
 
     @Test
-    void inPlaceUnlock_NoAck_RetriesUntilTheTotalDeadlineThenFailsClosed() {
+    void inPlaceUnlock_ExpiredBeforeFirstSend_FailsClosedWithoutSending() {
         ServerConnection connection = inPlaceReady();
         when(settings.getInPlaceUnlockTimeoutMillis()).thenReturn(0);
+
         coordinator.transfer(player);
 
-        lastScheduledTimeout().run();
+        verify(connection, never()).sendPluginMessage(any(), any(byte[].class));
+        verify(player).disconnect(nullable(Component.class));
+    }
+
+    @Test
+    void inPlaceUnlock_MissingCurrentServer_WaitsForReadinessWithoutConsumingAnAttempt() {
+        when(settings.getAuthServerMode()).thenReturn(Settings.AuthServerMode.IN_PLACE);
+        when(settings.getAuthServerInPlaceSecret()).thenReturn(ACK_SECRET);
+        when(settings.getInPlaceUnlockRetryIntervalMillis()).thenReturn(5_000);
+        when(settings.getInPlaceUnlockTimeoutMillis()).thenReturn(30_000);
+        when(player.isActive()).thenReturn(true);
+        when(player.getUniqueId()).thenReturn(state.playerId());
+        when(player.getUsername()).thenReturn("tester");
+        when(player.getCurrentServer()).thenReturn(Optional.empty());
+
+        assertSame(BackendTransferOutcome.WAITING_FOR_UNLOCK, coordinator.transfer(player));
+
+        Runnable retry = lastScheduledTimeout();
+        assertTrue(state.unlockAttempt().get().attemptsMade() == 0);
+        verify(lifecycle, never()).isPlayerOnAuthServer(player);
+        verify(selector, never()).findAvailableBackendServer(any());
+
+        ServerConnection connection = mock(ServerConnection.class);
+        when(player.getCurrentServer()).thenReturn(Optional.of(connection));
+        when(lifecycle.isPlayerOnAuthServer(player)).thenReturn(true);
+        when(connection.sendPluginMessage(any(), any(byte[].class))).thenReturn(true);
+
+        retry.run();
 
         verify(connection, times(1)).sendPluginMessage(any(), any(byte[].class));
-        verify(player).disconnect(nullable(Component.class));
+        assertTrue(state.unlockAttempt().get().attemptsMade() == 1);
     }
 
     @Test
